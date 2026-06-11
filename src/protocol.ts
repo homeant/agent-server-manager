@@ -1,5 +1,5 @@
 /**
- * IPC 协议：daemon 与各 svc CLI 客户端之间通过 unix domain socket
+ * IPC 协议：daemon 与各 asvc CLI 客户端之间通过 unix domain socket
  * 传输 newline-delimited JSON（每行一条消息）。
  *
  * - 请求/响应：客户端发 Request（带 id），daemon 回 Response（同 id）。

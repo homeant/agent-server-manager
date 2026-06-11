@@ -1,73 +1,79 @@
-# dev-server-manager
+# asvc
 
-统一管理本地开发服务的 **守护进程(daemon) + 一套 `svc` CLI**。人和 agent 共用同一套命令。
+统一管理本地开发服务的 **守护进程(daemon) + 一套 `asvc` CLI**。人和 agent 共用同一套命令。
 
 解决的问题：开发时 agent 会帮你启动服务，你自己也会启动，导致**端口冲突**、**进程难管理**。
 本工具让人和 agent 都通过**同一个 daemon** 操作服务：
 
-- **启动即注册**：只有一个 `svc start`。带 `-c` 给命令就自动注册并启动，按名去重不重复拉起。
-- **人**（`svc start <name> -c "..."`）：前台运行，像直接敲 `npm run dev` 一样实时刷日志，Ctrl-C 停。
-- **agent**（`svc start <name> -c "..." -d`）：加 `-d` 后台启动、跑完返回拿退出码。
-- 任何人都能 `svc logs` / `svc list` / `svc restart` / `svc stop` 操作同一批服务。
+- **启动即注册**：只有一个 `asvc start`。带 `-c` 给命令就自动注册并启动，按名去重不重复拉起。
+- **人**（`asvc start <name> -c "..."`）：前台运行，像直接敲 `npm run dev` 一样实时刷日志，Ctrl-C 停。
+- **agent**（`asvc start <name> -c "..." -d`）：加 `-d` 后台启动、跑完返回拿退出码。
+- 任何人都能 `asvc logs` / `asvc list` / `asvc restart` / `asvc stop` 操作同一批服务。
 - daemon 按**服务名去重**：同名服务只有一个实例，agent 和你都不会把它启动两遍 → 不再撞端口。
 
-同一个 `svc start`，靠 `-d` 区分前台/后台：
+同一个 `asvc start`，靠 `-d` 区分前台/后台：
 
 | 命令 | 谁用 | 行为 |
 | --- | --- | --- |
-| `svc start <name> -c "..."` | 人 | **前台**：占住终端实时刷日志，像原始命令；Ctrl-C 停止服务 |
-| `svc start <name> -c "..." -d` | agent | **后台**：启动后立即返回，带退出码（成功 0 / 启动失败 1） |
+| `asvc start <name> -c "..."` | 人 | **前台**：占住终端实时刷日志，像原始命令；Ctrl-C 停止服务 |
+| `asvc start <name> -c "..." -d` | agent | **后台**：启动后立即返回，带退出码（成功 0 / 启动失败 1） |
 
-> 为什么是 CLI 而不是 MCP：agent（如 Claude Code）本来就有 shell，直接跑 `svc` 命令最简单——
+> 为什么是 CLI 而不是 MCP：agent（如 Claude Code）本来就有 shell，直接跑 `asvc` 命令最简单——
 > 不用配 MCP server、不用单独的协议，人和 agent 认知统一，看到的输出也一样。
 
 ## 核心设计：重启不断开你的终端
 
 服务进程是 **daemon 的子进程**，不是某个终端 shell 的子进程。
-你在终端 `svc start web` 前台跑着（或在另一个终端 `svc logs web -f` 跟随）时，
-agent 在另一头 `svc restart web`，daemon 只是把底层进程换了一个，
+你在终端 `asvc start web` 前台跑着（或在另一个终端 `asvc logs web -f` 跟随）时，
+agent 在另一头 `asvc restart web`，daemon 只是把底层进程换了一个，
 **你的终端不会断**——只会看到一行 `» restarting...` 然后新日志继续刷。
 （注意：只有你自己按 Ctrl-C 才会停服务并退出；agent 的 restart 不会让你的终端退出。）
 
 ```
    人的终端  ──┐
-   (svc CLI)   │        ┌─────────────┐      ┌── 服务进程 web (pid A)
+   (asvc CLI)   │        ┌─────────────┐      ┌── 服务进程 web (pid A)
                ├─ IPC ─▶│   daemon    │─────▶├── 服务进程 api (pid B)
    agent     ──┘ (sock) │  (单实例)    │      └── ...
-   (svc CLI)            └─────────────┘
+   (asvc CLI)            └─────────────┘
 ```
 
 ## 安装
 
 ```bash
-npm install
-npm run build
-npm link        # 推荐：把 svc / svc-daemon 装到全局 PATH，这样 agent 和你都能直接敲 svc
+npm install -g asvc
 ```
 
-未 `npm link` 时用 `node /abs/path/dist/cli.js ...` 亦可。daemon 会在首次执行任意 `svc` 命令时**自动拉起**，无需手动启动。
+装完 `asvc` / `asvc-daemon` 就在 PATH 上，agent 和你都能直接敲 `asvc`。
+daemon 会在首次执行任意 `asvc` 命令时**自动拉起**，无需手动启动。
 
-## 命令一览（`svc`）
+从源码开发时改用本地构建：
+
+```bash
+npm install && npm run build
+npm link        # 把本地构建的 asvc 装到全局 PATH
+```
+
+## 命令一览（`asvc`）
 
 ```bash
 # 启动即注册（前台，人用）：像直接敲原始命令，实时刷日志，Ctrl-C 停止服务
-svc start web -c "npm run dev" --port 3000              # cwd 默认当前目录
-svc start web                                           # 已注册过则可省略 -c
+asvc start web -c "npm run dev" --port 3000              # cwd 默认当前目录
+asvc start web                                           # 已注册过则可省略 -c
 
 # 启动即注册（后台，agent 用）：加 -d，跑完即返回、带退出码
-svc start web -c "npm run dev" --port 3000 -d
-svc start api -c "go run ." --cwd /path/api --env KEY=VAL --autorestart -d
+asvc start web -c "npm run dev" --port 3000 -d
+asvc start api -c "go run ." --cwd /path/api --env KEY=VAL --autorestart -d
 
-svc list                 # 列出所有服务及状态
-svc logs web             # 看 web 最近 200 行日志
-svc logs web -f          # 持续跟随（agent 重启服务也不断开）
-svc logs web -n 500      # 看最近 500 行
-svc restart web          # 重启（前台/跟随的终端都不会断）
-svc stop web             # 停止（保留定义，可再启动）
-svc rm web               # 移除（先停后删）
+asvc list                 # 列出所有服务及状态
+asvc logs web             # 看 web 最近 200 行日志
+asvc logs web -f          # 持续跟随（agent 重启服务也不断开）
+asvc logs web -n 500      # 看最近 500 行
+asvc restart web          # 重启（前台/跟随的终端都不会断）
+asvc stop web             # 停止（保留定义，可再启动）
+asvc rm web               # 移除（先停后删）
 
-svc daemon status        # 看 daemon 是否运行
-svc daemon stop          # 停 daemon（会先关闭所有服务）
+asvc daemon status        # 看 daemon 是否运行
+asvc daemon stop          # 停 daemon（会先关闭所有服务）
 ```
 
 `start` 参数：`-c/--cmd`（命令，经 shell 执行）、`-w/--cwd`（默认当前目录）、
@@ -83,43 +89,50 @@ svc daemon stop          # 停 daemon（会先关闭所有服务）
 
 这样不依赖事先声明 `port`：无论端口被谁占（你手动起的、孤儿进程、还是另一个服务），
 只要进程因此启动失败，走 Bash 的 agent 都能直接从**非零退出码 + 输出**判定失败和原因，
-而不是拿到一个乐观的 “running” 再去翻日志。`svc start`（前台）同样：启动即失败会打印提示并以非零码退出。
+而不是拿到一个乐观的 “running” 再去翻日志。`asvc start`（前台）同样：启动即失败会打印提示并以非零码退出。
 
 ## 让 agent 用起来（Claude Code Skill）
 
-本仓库自带一个 Claude Code skill：[`skill/dev-server-manager/SKILL.md`](skill/dev-server-manager/SKILL.md)。
-它教 agent 在该启动/重启/看日志时改用 `svc`，并强调后台启动必须带 `-d`、按退出码判成败。
+npm 包内自带一个 Claude Code skill：[`skill/asvc/SKILL.md`](skill/asvc/SKILL.md)。
+它教 agent 在该启动/重启/看日志时改用 `asvc`，并强调后台启动必须带 `-d`、按退出码判成败。
 
-安装（软链到全局 skills 目录，编辑仓库即同步生效）：
+安装（软链到全局 skills 目录）：
 
 ```bash
-npm link    # 让 svc 进 PATH（skill 找不到 svc 时会回退到本仓库 dist/cli.js）
-ln -sfn "$PWD/skill/dev-server-manager" ~/.claude/skills/dev-server-manager
+npm install -g asvc
+ln -sfn "$(npm root -g)/asvc/skill/asvc" ~/.claude/skills/asvc
+```
+
+从源码开发时，把软链指向仓库即可（编辑仓库即同步生效）：
+
+```bash
+ln -sfn "$PWD/skill/asvc" ~/.claude/skills/asvc
 ```
 
 之后 agent 在「启动服务 / 重启 / 看日志 / 排查起不来」时会自动参考该 skill。
 也可以在项目 `CLAUDE.md` 里加一句兜底约定：
 
 ```md
-启动/重启/停止开发服务一律用 `svc`（dev-server-manager），agent 用 `svc start <name> -c "<命令>" -d`
-（务必带 -d 后台），重启 `svc restart <name>`，看日志 `svc logs <name> -n 200`。
+启动/重启/停止开发服务一律用 `asvc`，agent 用 `asvc start <name> -c "<命令>" -d`
+（务必带 -d 后台），重启 `asvc restart <name>`，看日志 `asvc logs <name> -n 200`。
 ```
 
 ## 工作流示例
 
-1. 你在 web 目录 `svc start web -c "npm run dev" --port 3000` → 前台跑起来，实时刷日志。
-   （或让 agent `svc start web -c "npm run dev" --port 3000 -d` 后台起，你再 `svc logs web -f` 看。）
-2. agent 改完代码执行 `svc restart web`
+1. 你在 web 目录 `asvc start web -c "npm run dev" --port 3000` → 前台跑起来，实时刷日志。
+   （或让 agent `asvc start web -c "npm run dev" --port 3000 -d` 后台起，你再 `asvc logs web -f` 看。）
+2. agent 改完代码执行 `asvc restart web`
    → 你的终端看到 `» restarting...`，随后新日志继续，**终端不断开**。
 3. 你不想看了按 Ctrl-C → 服务停止、终端退出（和原始命令一致）。
-4. 你随时 `svc restart web` / `svc stop web` 手动接管。
+4. 你随时 `asvc restart web` / `asvc stop web` 手动接管。
 
 ## 数据与配置
 
-- 全局单实例，家目录默认 `~/.server-manager`（可用 `SVC_HOME` 覆盖）。
-- socket：`$SVC_HOME/daemon.sock`（可用 `SVC_SOCKET` 覆盖）。
-- 每个服务日志落盘 `$SVC_HOME/logs/<name>.log`，内存保留最近 2000 行供快速查询。
-- 服务定义是**动态注册**的，不落地为配置文件；daemon 重启后注册表清空，由 agent/你重新注册。
+- 全局单实例，家目录默认 `~/.asvc`（可用 `ASVC_HOME` 覆盖）。
+- socket：`$ASVC_HOME/daemon.sock`（可用 `ASVC_SOCKET` 覆盖）。
+- 每个服务日志落盘 `$ASVC_HOME/logs/<name>.log`，内存保留最近 2000 行供快速查询。
+- 服务定义**动态注册**，无需手写配置文件；注册表持久化在 `$ASVC_HOME/registry.json`，
+  daemon 重启后自动恢复定义（不自动拉起进程，`asvc start <name>` 即可再启动，无需重新带 `-c`）。
 
 ## 实现要点
 

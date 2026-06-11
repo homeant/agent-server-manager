@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 import { Client } from "./client.js";
 import {
@@ -9,15 +12,23 @@ import {
   ServiceStatus,
 } from "./protocol.js";
 
+// dist/cli.js → ../package.json，版本号跟随包本身
+const pkg = JSON.parse(
+  fs.readFileSync(
+    path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "package.json"),
+    "utf8"
+  )
+) as { version: string };
+
 const program = new Command();
 program
-  .name("svc")
+  .name("asvc")
   .description(
-    "本地开发服务管理器。人和 agent 共用同一套命令：svc start 启动即注册（前台像原始命令，\n" +
-      "-d 后台给 agent 用），svc logs/list/restart/stop 查看与管理。所有操作走同一个 daemon、\n" +
+    "本地开发服务管理器。人和 agent 共用同一套命令：asvc start 启动即注册（前台像原始命令，\n" +
+      "-d 后台给 agent 用），asvc logs/list/restart/stop 查看与管理。所有操作走同一个 daemon、\n" +
       "按服务名去重，重启服务不会断开你前台/跟随的终端。"
   )
-  .version("0.1.0");
+  .version(pkg.version);
 
 // ---- 颜色（仅 TTY 时启用，零依赖）----
 const tty = process.stdout.isTTY;
@@ -142,7 +153,7 @@ function buildSpec(
  * 前台运行：像直接敲原始命令一样，占住终端实时刷日志。
  * - Ctrl-C → 停止服务并退出（和原生命令一致）。
  * - 服务自己崩溃/被停 → 前台退出（崩溃用其退出码）。
- * - 被 agent `svc restart` → 终端不退出，看到 restart 标记后新日志继续。
+ * - 被 agent `asvc restart` → 终端不退出，看到 restart 标记后新日志继续。
  */
 async function startForeground(
   name: string,
@@ -220,7 +231,7 @@ program
     await withClient(async (client) => {
       const list = await client.request<ServiceInfo[]>({ type: "list" });
       if (list.length === 0) {
-        console.log(c.dim('（暂无服务。用 svc start <name> -c "<命令>" 启动一个）'));
+        console.log(c.dim('（暂无服务。用 asvc start <name> -c "<命令>" 启动一个）'));
         return;
       }
       const rows = list.map((s) => ({
@@ -330,7 +341,7 @@ program
         if (!spec && /未知服务/.test(e.message)) {
           fail(
             `${e.message}\n该服务尚未注册。首次启动请用 -c 指定命令，如：` +
-              `svc start ${name} -c "npm run dev"`
+              `asvc start ${name} -c "npm run dev"`
           );
         }
         fail(e.message);
