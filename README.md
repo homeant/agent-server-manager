@@ -46,6 +46,18 @@ npm install -g @homeant/asvc
 装完 `asvc` / `asvc-daemon` 就在 PATH 上，agent 和你都能直接敲 `asvc`。
 daemon 会在首次执行任意 `asvc` 命令时**自动拉起**，无需手动启动。
 
+### Shell 补全（Tab 提示）
+
+```bash
+# zsh：加到 ~/.zshrc
+eval "$(asvc completion zsh)"
+# bash：加到 ~/.bashrc
+eval "$(asvc completion bash)"
+```
+
+补全覆盖子命令、各命令的 flag，以及**服务名**——`asvc restart <TAB>` 会实时列出
+daemon 里已注册的服务（daemon 未运行时安静地不补全，不会触发自动拉起）。
+
 从源码开发时改用本地构建：
 
 ```bash

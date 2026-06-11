@@ -373,6 +373,113 @@ program
     }).catch((e) => fail(e.message));
   });
 
+// ---- completion ----
+
+const COMPLETION_ZSH = `
+_asvc() {
+  local -a _asvc_cmds
+  _asvc_cmds=(
+    'start:启动服务（前台；-d 后台；首次需 -c）'
+    'stop:停止服务'
+    'restart:重启服务'
+    'logs:查看日志'
+    'list:列出所有服务'
+    'rm:移除服务'
+    'daemon:管理后台 daemon'
+    'completion:输出 shell 补全脚本'
+  )
+  if (( CURRENT == 2 )); then
+    _describe -t commands 'asvc command' _asvc_cmds
+    return
+  fi
+  local cmd=\${words[2]}
+  case \$cmd in
+    start|stop|restart|logs|rm|remove)
+      if (( CURRENT == 3 )); then
+        local -a _svcs
+        _svcs=( \${(f)"\$(command asvc __complete services 2>/dev/null)"} )
+        (( \${#_svcs} )) && _describe -t services 'service' _svcs
+        return
+      fi
+      ;;
+    daemon)
+      (( CURRENT == 3 )) && _values 'daemon command' status stop
+      return
+      ;;
+    completion)
+      (( CURRENT == 3 )) && _values 'shell' zsh bash
+      return
+      ;;
+  esac
+  case \$cmd in
+    start)
+      _arguments \\
+        '(-c --cmd)'{-c,--cmd}'[启动命令（经 shell 执行）]:command:' \\
+        '(-w --cwd)'{-w,--cwd}'[工作目录]:dir:_files -/' \\
+        '(-p --port)'{-p,--port}'[服务端口]:port:' \\
+        '*'{-e,--env}'[环境变量 KEY=VAL]:env:' \\
+        '--autorestart[进程异常退出时自动重启]' \\
+        '(-d --detach)'{-d,--detach}'[后台启动并立即返回]'
+      ;;
+    logs)
+      _arguments \\
+        '(-f --follow)'{-f,--follow}'[持续跟随]' \\
+        '(-n --lines)'{-n,--lines}'[显示最近 N 行]:lines:'
+      ;;
+  esac
+}
+compdef _asvc asvc
+`.trim();
+
+const COMPLETION_BASH = `
+_asvc() {
+  local cur="\${COMP_WORDS[COMP_CWORD]}"
+  if [ "\$COMP_CWORD" -eq 1 ]; then
+    COMPREPLY=( \$(compgen -W "start stop restart logs list ls rm daemon completion" -- "\$cur") )
+    return
+  fi
+  local cmd="\${COMP_WORDS[1]}"
+  case "\$cmd" in
+    start|stop|restart|logs|rm|remove)
+      if [ "\$COMP_CWORD" -eq 2 ]; then
+        COMPREPLY=( \$(compgen -W "\$(asvc __complete services 2>/dev/null)" -- "\$cur") )
+      fi
+      ;;
+    daemon)
+      [ "\$COMP_CWORD" -eq 2 ] && COMPREPLY=( \$(compgen -W "status stop" -- "\$cur") )
+      ;;
+    completion)
+      [ "\$COMP_CWORD" -eq 2 ] && COMPREPLY=( \$(compgen -W "zsh bash" -- "\$cur") )
+      ;;
+  esac
+}
+complete -F _asvc asvc
+`.trim();
+
+program
+  .command("completion <shell>")
+  .description('输出 shell 补全脚本。zsh: 在 ~/.zshrc 加 eval "$(asvc completion zsh)"；bash 同理')
+  .action((shell: string) => {
+    if (shell === "zsh") console.log(COMPLETION_ZSH);
+    else if (shell === "bash") console.log(COMPLETION_BASH);
+    else fail(`不支持的 shell: ${shell}（支持 zsh / bash）`);
+  });
+
+// 补全脚本的回调入口：列出已注册服务名（daemon 未运行则静默输出空，绝不 auto-spawn）
+program
+  .command("__complete <what>", { hidden: true })
+  .action(async (what: string) => {
+    if (what !== "services") return;
+    try {
+      const client = await Client.connect(false);
+      const list = await client.request<ServiceInfo[]>({ type: "list" });
+      client.close();
+      for (const s of list) console.log(s.name);
+    } catch {
+      /* daemon 未运行 */
+    }
+  });
+
 // ---- daemon 子命令 ----
 const daemon = program.command("daemon").description("管理后台 daemon");
 daemon
