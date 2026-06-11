@@ -9,7 +9,7 @@ import {
   ServiceSpecInput,
   ServiceStatus,
 } from "../protocol.js";
-import { LOG_DIR } from "../paths.js";
+import { LOG_DIR, REGISTRY_FILE } from "../paths.js";
 
 const RING_SIZE = 2000; // 每个服务内存中保留的日志行数
 const STOP_GRACE_MS = 5000; // SIGTERM 后等待退出，超时则 SIGKILL
@@ -32,6 +32,10 @@ interface ManagedService {
   restarting: boolean;
   /** 等待进程退出的 promise 解析器 */
   exitWaiters: Array<() => void>;
+  /** 各输出流中尚未遇到换行的半行（chunk 边界可能切在行中间） */
+  partial: { stdout: string; stderr: string };
+  /** 操作队列：start/stop/restart/remove 按序执行，避免并发交错 */
+  opQueue: Promise<unknown>;
 }
 
 /**
@@ -46,6 +50,7 @@ export class Supervisor extends EventEmitter {
   constructor() {
     super();
     fs.mkdirSync(LOG_DIR, { recursive: true });
+    this.loadRegistry();
   }
 
   list(): ServiceInfo[] {
@@ -75,19 +80,13 @@ export class Supervisor extends EventEmitter {
     if (existing) {
       // 运行中只更新「下一次启动」生效的定义，不打断当前进程
       existing.spec = spec;
+      this.persistRegistry();
       this.emitStatus(existing);
       return this.toInfo(existing);
     }
-    const svc: ManagedService = {
-      spec,
-      status: "stopped",
-      restarts: 0,
-      ring: [],
-      intentionalStop: false,
-      restarting: false,
-      exitWaiters: [],
-    };
+    const svc = this.newService(spec);
     this.services.set(spec.name, svc);
+    this.persistRegistry();
     this.system(svc, `registered: ${spec.command}  (cwd: ${spec.cwd})`);
     this.emitStatus(svc);
     return this.toInfo(svc);
@@ -95,18 +94,22 @@ export class Supervisor extends EventEmitter {
 
   async start(name: string): Promise<ServiceInfo> {
     const svc = this.must(name);
-    if (svc.status === "running" || svc.status === "starting") {
+    return this.runExclusive(svc, async () => {
+      if (svc.status === "running" || svc.status === "starting") {
+        return this.toInfo(svc);
+      }
+      this.spawnProcess(svc);
+      await this.waitSettle(name, SETTLE_MS);
       return this.toInfo(svc);
-    }
-    this.spawnProcess(svc);
-    await this.waitSettle(name, SETTLE_MS);
-    return this.toInfo(svc);
+    });
   }
 
   async stop(name: string): Promise<ServiceInfo> {
     const svc = this.must(name);
-    await this.stopProcess(svc);
-    return this.toInfo(svc);
+    return this.runExclusive(svc, async () => {
+      await this.stopProcess(svc);
+      return this.toInfo(svc);
+    });
   }
 
   /**
@@ -116,25 +119,30 @@ export class Supervisor extends EventEmitter {
    */
   async restart(name: string): Promise<ServiceInfo> {
     const svc = this.must(name);
-    this.system(svc, "restarting...");
-    svc.restarting = true;
-    try {
-      await this.stopProcess(svc);
-      svc.restarts++;
-      this.spawnProcess(svc);
-      await this.waitSettle(name, SETTLE_MS);
-    } finally {
-      svc.restarting = false;
-      this.emitStatus(svc);
-    }
-    return this.toInfo(svc);
+    return this.runExclusive(svc, async () => {
+      this.system(svc, "restarting...");
+      svc.restarting = true;
+      try {
+        await this.stopProcess(svc);
+        svc.restarts++;
+        this.spawnProcess(svc);
+        await this.waitSettle(name, SETTLE_MS);
+      } finally {
+        svc.restarting = false;
+        this.emitStatus(svc);
+      }
+      return this.toInfo(svc);
+    });
   }
 
   async remove(name: string): Promise<void> {
     const svc = this.must(name);
-    await this.stopProcess(svc);
-    svc.logStream?.end();
-    this.services.delete(name);
+    await this.runExclusive(svc, async () => {
+      await this.stopProcess(svc);
+      svc.logStream?.end();
+      this.services.delete(name);
+      this.persistRegistry();
+    });
   }
 
   /** 返回最近 n 行日志 */
@@ -149,6 +157,60 @@ export class Supervisor extends EventEmitter {
   }
 
   // ---- 内部 ----
+
+  private newService(spec: ServiceSpec): ManagedService {
+    return {
+      spec,
+      status: "stopped",
+      restarts: 0,
+      ring: [],
+      intentionalStop: false,
+      restarting: false,
+      exitWaiters: [],
+      partial: { stdout: "", stderr: "" },
+      opQueue: Promise.resolve(),
+    };
+  }
+
+  /**
+   * 同一服务上的操作排队执行：stop 进行到一半时来了 start，
+   * 必须等旧进程完全退出再拉新，否则会出现两个进程、状态互相覆盖。
+   */
+  private runExclusive<T>(svc: ManagedService, fn: () => Promise<T>): Promise<T> {
+    const run = svc.opQueue.then(fn, fn);
+    svc.opQueue = run.catch(() => undefined);
+    return run;
+  }
+
+  /** daemon 启动时恢复上次的服务定义（只恢复注册，不自动拉起） */
+  private loadRegistry(): void {
+    let specs: unknown;
+    try {
+      specs = JSON.parse(fs.readFileSync(REGISTRY_FILE, "utf8"));
+    } catch {
+      return; // 不存在或损坏，从空注册表开始
+    }
+    if (!Array.isArray(specs)) return;
+    for (const spec of specs as ServiceSpec[]) {
+      if (!spec || typeof spec.name !== "string" || typeof spec.command !== "string") {
+        continue;
+      }
+      const svc = this.newService(spec);
+      this.services.set(spec.name, svc);
+      this.system(svc, `restored from registry: ${spec.command}  (cwd: ${spec.cwd})`);
+    }
+  }
+
+  private persistRegistry(): void {
+    const specs = [...this.services.values()].map((s) => s.spec);
+    const tmp = REGISTRY_FILE + ".tmp";
+    try {
+      fs.writeFileSync(tmp, JSON.stringify(specs, null, 2));
+      fs.renameSync(tmp, REGISTRY_FILE);
+    } catch {
+      // 持久化失败不影响当前运行，下次写入再试
+    }
+  }
 
   /**
    * 启动后观察一小段时间：若进程在窗口内退出/报错（典型如端口被占
@@ -178,6 +240,7 @@ export class Supervisor extends EventEmitter {
   private spawnProcess(svc: ManagedService): void {
     svc.status = "starting";
     svc.intentionalStop = false;
+    svc.partial = { stdout: "", stderr: "" };
     this.emitStatus(svc);
 
     const child = spawn(svc.spec.command, {
@@ -215,6 +278,7 @@ export class Supervisor extends EventEmitter {
     });
 
     child.on("exit", (code, signal) => {
+      this.flushPartial(svc);
       svc.lastExitCode = code;
       svc.lastExitSignal = signal;
       svc.child = undefined;
@@ -291,15 +355,30 @@ export class Supervisor extends EventEmitter {
     for (const w of waiters) w();
   }
 
+  /**
+   * stdout/stderr 是字节流，一行日志可能被切在两个 chunk 里：
+   * 只有遇到换行才提交，末尾的半行留在 partial，等下个 chunk 或进程退出时补全。
+   */
   private ingest(
     svc: ManagedService,
     stream: "stdout" | "stderr",
     chunk: Buffer
   ): void {
-    const text = chunk.toString("utf8");
-    for (const raw of text.split(/\r?\n/)) {
+    const parts = (svc.partial[stream] + chunk.toString("utf8")).split(/\r?\n/);
+    svc.partial[stream] = parts.pop() ?? "";
+    for (const raw of parts) {
       if (raw === "") continue;
       this.pushLine(svc, stream, raw);
+    }
+  }
+
+  /** 进程退出时把没带换行的最后半行也写出来 */
+  private flushPartial(svc: ManagedService): void {
+    for (const stream of ["stdout", "stderr"] as const) {
+      const rest = svc.partial[stream];
+      if (rest === "") continue;
+      svc.partial[stream] = "";
+      this.pushLine(svc, stream, rest);
     }
   }
 

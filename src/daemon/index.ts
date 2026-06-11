@@ -122,22 +122,45 @@ async function shutdown(code: number): Promise<void> {
   process.exit(code);
 }
 
-// 启动前清掉可能残留的 socket 文件
-try {
-  fs.unlinkSync(SOCKET_PATH);
-} catch {
-  /* ignore */
+/**
+ * 单实例保护：先试着连一下 socket。
+ * - 连得上 → 已有活着的 daemon，本进程直接退出（不能删活 socket 抢管，
+ *   否则旧 daemon 和它的子进程全部失管）。
+ * - 连不上 → socket 是上次异常退出的残留，清掉再监听。
+ */
+function checkExistingDaemon(): Promise<boolean> {
+  return new Promise((resolve) => {
+    const probe = net.createConnection(SOCKET_PATH);
+    probe.once("connect", () => {
+      probe.destroy();
+      resolve(true);
+    });
+    probe.once("error", () => resolve(false));
+  });
 }
 
-server.listen(SOCKET_PATH, () => {
-  fs.writeFileSync(PID_FILE, String(process.pid));
-  // 通知父进程（auto-spawn 时）daemon 已就绪
-  if (process.send) process.send("ready");
-  console.log(`[svc-daemon] listening on ${SOCKET_PATH} (pid ${process.pid})`);
-});
+void (async () => {
+  if (await checkExistingDaemon()) {
+    console.log("[asvc-daemon] 已有 daemon 在运行，本进程退出");
+    // auto-spawn 的父进程在等 ready：现存 daemon 即「就绪」，让它直接去连
+    if (process.send) process.send("ready");
+    process.exit(0);
+  }
+  try {
+    fs.unlinkSync(SOCKET_PATH);
+  } catch {
+    /* 不存在 */
+  }
+  server.listen(SOCKET_PATH, () => {
+    fs.writeFileSync(PID_FILE, String(process.pid));
+    // 通知父进程（auto-spawn 时）daemon 已就绪
+    if (process.send) process.send("ready");
+    console.log(`[asvc-daemon] listening on ${SOCKET_PATH} (pid ${process.pid})`);
+  });
+})();
 
 server.on("error", (err) => {
-  console.error("[svc-daemon] server error:", err);
+  console.error("[asvc-daemon] server error:", err);
   process.exit(1);
 });
 

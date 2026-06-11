@@ -13,5 +13,7 @@ export const SOCKET_PATH =
   process.env.SVC_SOCKET || path.join(SVC_HOME, "daemon.sock");
 
 export const PID_FILE = path.join(SVC_HOME, "daemon.pid");
+/** 服务定义持久化文件：daemon 重启后恢复注册表（只恢复定义，不自动拉起） */
+export const REGISTRY_FILE = path.join(SVC_HOME, "registry.json");
 export const LOG_DIR = path.join(SVC_HOME, "logs");
 export const DAEMON_LOG = path.join(SVC_HOME, "daemon.log");
