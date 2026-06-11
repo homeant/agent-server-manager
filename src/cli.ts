@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Command } from "commander";
@@ -68,6 +69,33 @@ function fmtUptime(startedAt?: number): string {
   if (m < 60) return `${m}m${s % 60}s`;
   const h = Math.floor(m / 60);
   return `${h}h${m % 60}m`;
+}
+
+/**
+ * 路径展示：home 缩成 ~；超长时收缩中间（保头部根段 + 尾部目录名），
+ * 头尾都有信息量，比直接截尾更利于一眼认出是哪个项目。
+ */
+function shortenPath(p: string, max = 36): string {
+  const home = os.homedir();
+  if (p === home) return "~";
+  if (p.startsWith(home + "/")) p = "~" + p.slice(home.length);
+  if (p.length <= max) return p;
+  const parts = p.split("/");
+  // 绝对路径首段是空串（leading /），头部取到第一个真实段，如 "/tmp"
+  const headEnd = parts[0] === "" ? 1 : 0;
+  const head = parts.slice(0, headEnd + 1).join("/") || "/";
+  let tail = "";
+  for (let i = parts.length - 1; i > headEnd; i--) {
+    const cand = parts[i] + (tail ? "/" + tail : "");
+    if (head.length + 3 + cand.length > max) break;
+    tail = cand;
+  }
+  if (!tail) {
+    // 末段本身就超长，退化为字符级中间截断
+    const half = Math.floor((max - 1) / 2);
+    return p.slice(0, max - 1 - half) + "…" + p.slice(-half);
+  }
+  return `${head}/…/${tail}`;
 }
 
 async function withClient<T>(fn: (client: Client) => Promise<T>): Promise<T> {
@@ -241,6 +269,7 @@ program
         UPTIME: s.status === "running" ? fmtUptime(s.startedAt) : "-",
         PORT: s.port ? String(s.port) : "-",
         RESTARTS: String(s.restarts),
+        CWD: shortenPath(s.cwd),
         COMMAND: s.command.length > 40 ? s.command.slice(0, 39) + "…" : s.command,
       }));
       printTable(rows);
