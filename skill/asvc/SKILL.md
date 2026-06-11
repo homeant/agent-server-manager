@@ -50,11 +50,11 @@ Never start a dev server by running it directly (`npm run dev`, `npm run dev &`,
 
 ## Resolving the `asvc` command
 
-`asvc` comes from the npm package `asvc`. It should already be on `PATH`.
+`asvc` comes from the npm package `@homeant/asvc`. It should already be on `PATH`.
 If `command -v asvc` finds nothing, install it globally:
 
 ```bash
-npm install -g asvc
+npm install -g @homeant/asvc
 ```
 
 (If you are working inside the agent-server-manager repo itself, `npm run build && npm link`

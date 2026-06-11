@@ -40,7 +40,7 @@ agent 在另一头 `asvc restart web`，daemon 只是把底层进程换了一个
 ## 安装
 
 ```bash
-npm install -g asvc
+npm install -g @homeant/asvc
 ```
 
 装完 `asvc` / `asvc-daemon` 就在 PATH 上，agent 和你都能直接敲 `asvc`。
@@ -99,8 +99,8 @@ npm 包内自带一个 Claude Code skill：[`skill/asvc/SKILL.md`](skill/asvc/SK
 安装（软链到全局 skills 目录）：
 
 ```bash
-npm install -g asvc
-ln -sfn "$(npm root -g)/asvc/skill/asvc" ~/.claude/skills/asvc
+npm install -g @homeant/asvc
+ln -sfn "$(npm root -g)/@homeant/asvc/skill/asvc" ~/.claude/skills/asvc
 ```
 
 从源码开发时，把软链指向仓库即可（编辑仓库即同步生效）：
