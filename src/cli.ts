@@ -386,7 +386,6 @@ _asvc() {
     'list:列出所有服务'
     'rm:移除服务'
     'daemon:管理后台 daemon'
-    'completion:输出 shell 补全脚本'
   )
   if (( CURRENT == 2 )); then
     _describe -t commands 'asvc command' _asvc_cmds
@@ -435,7 +434,7 @@ const COMPLETION_BASH = `
 _asvc() {
   local cur="\${COMP_WORDS[COMP_CWORD]}"
   if [ "\$COMP_CWORD" -eq 1 ]; then
-    COMPREPLY=( \$(compgen -W "start stop restart logs list ls rm daemon completion" -- "\$cur") )
+    COMPREPLY=( \$(compgen -W "start stop restart logs list ls rm daemon" -- "\$cur") )
     return
   fi
   local cmd="\${COMP_WORDS[1]}"
