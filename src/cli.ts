@@ -58,7 +58,12 @@ function statusColor(s: ServiceStatus): string {
 }
 
 function fmtTime(ts: number): string {
-  return new Date(ts).toLocaleTimeString();
+  const d = new Date(ts);
+  const p = (n: number, len = 2) => String(n).padStart(len, "0");
+  return (
+    `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ` +
+    `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(), 3)}`
+  );
 }
 
 function fmtUptime(startedAt?: number): string {
