@@ -1,6 +1,6 @@
 {
   "name": "@homeant/asvc",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "统一管理本地开发服务的守护进程 + CLI，让人和 agent 通过同一套 asvc 命令启动/重启/关闭服务，避免端口冲突与重复启动。",
   "type": "module",
   "license": "MIT",
