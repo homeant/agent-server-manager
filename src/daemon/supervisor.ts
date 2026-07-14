@@ -124,7 +124,7 @@ export class Supervisor extends EventEmitter {
       svc.restarting = true;
       try {
         await this.stopProcess(svc);
-        svc.restarts++;
+        svc.restarts = 0;
         this.spawnProcess(svc);
         await this.waitSettle(name, SETTLE_MS);
       } finally {

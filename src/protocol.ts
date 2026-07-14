@@ -38,7 +38,7 @@ export interface ServiceInfo extends ServiceSpec {
   /** 最近一次退出码 */
   lastExitCode?: number | null;
   lastExitSignal?: string | null;
-  /** 重启次数 */
+  /** 程序自动重启次数（仅统计 --autorestart 触发的重启） */
   restarts: number;
   /** 是否正处于「重启中」（停旧进程→起新进程之间）。
    *  前台 attach 的客户端据此区分「服务真退出了」与「只是被重启」。 */

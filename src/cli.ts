@@ -273,7 +273,7 @@ program
         PID: s.pid ? String(s.pid) : "-",
         UPTIME: s.status === "running" ? fmtUptime(s.startedAt) : "-",
         PORT: s.port ? String(s.port) : "-",
-        RESTARTS: String(s.restarts),
+        AUTO_RESTARTS: String(s.restarts),
         CWD: shortenPath(s.cwd),
         COMMAND: s.command.length > 40 ? s.command.slice(0, 39) + "…" : s.command,
       }));
