@@ -12,6 +12,7 @@ import {
   ServiceStatus,
 } from "../protocol.js";
 import { LOG_DIR, REGISTRY_FILE } from "../paths.js";
+import { buildServiceEnv } from "./runtime-env.js";
 
 const RING_SIZE = 2000; // 每个服务内存中保留的日志行数
 const STOP_GRACE_MS = 5000; // SIGTERM 后等待退出，超时则 SIGKILL
@@ -425,7 +426,7 @@ export class Supervisor extends EventEmitter {
 
     const child = spawn(svc.spec.command, {
       cwd: svc.spec.cwd,
-      env: { ...process.env, ...(svc.spec.env ?? {}) },
+      env: buildServiceEnv(process.env, svc.spec.env),
       shell: true,
       detached: true, // 独立进程组，便于整组终止
       stdio: ["ignore", "pipe", "pipe"],

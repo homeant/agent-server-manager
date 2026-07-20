@@ -62,6 +62,33 @@ npm install -g @homeant/asvc
 (If you are working inside the agent-server-manager repo itself, `npm run build && npm link`
 uses the local build instead.)
 
+If asdf reports that `asvc` exists only under a different Node version, do **not** change
+to another project directory just to make the shim run. That changes only the control CLI's
+resolution and does not select the managed service's runtime. Use a stable `asvc` executable
+outside the asdf shims, or install `@homeant/asvc` under the current Node version.
+
+For released `asvc` versions that do not yet isolate the service runtime, make the registered
+command explicit whenever the service cwd has `.tool-versions`:
+
+```bash
+ASVC_BIN=/absolute/path/to/asvc-outside-asdf-shims
+ASDF_BIN="$(command -v asdf)"
+"$ASVC_BIN" start web -c "$ASDF_BIN exec npm run dev" --cwd /absolute/path/to/web --port 3000 -d
+"$ASVC_BIN" restart web
+```
+
+Resolve both binaries to absolute, non-shim paths before registration. Updating a running
+service's definition does not change its current process; restart it, then verify the expected
+runtime and the actual managed process executable:
+
+```bash
+cd /absolute/path/to/web
+asdf exec node -p 'process.version + " " + process.execPath'
+lsof -a -p <service-pid> -d txt
+```
+
+A correct cwd, an open port, or HTTP 200 does not prove the runtime version.
+
 ## Commands
 
 ```bash

@@ -46,6 +46,11 @@ npm install -g @homeant/asvc
 装完 `asvc` / `asvc-daemon` 就在 PATH 上，agent 和你都能直接敲 `asvc`。
 daemon 会在首次执行任意 `asvc` 命令时**自动拉起**，无需手动启动。
 
+如果使用 asdf，`npm install -g` 的包按 Node 版本隔离：只在某个 Node 版本下安装
+`@homeant/asvc`，会导致其他版本的项目目录里 asdf shim 拒绝执行 `asvc`。短期可以在每个
+常用 Node 版本下各安装一次，或从已安装版本的 `bin/asvc` 建一个不经过 asdf shim 的稳定
+入口。不要通过切换到另一个项目目录来调用 `asvc`；这只会掩盖控制端 shim 问题。
+
 ### Shell 补全（Tab 提示）
 
 ```bash
@@ -174,6 +179,9 @@ ln -sfn "$PWD/skill/asvc" ~/.claude/skills/asvc
 - IPC：unix domain socket + newline-delimited JSON（请求/响应 + 事件推送）。
 - 进程组：`spawn(..., { shell:true, detached:true })`，停止时 `kill(-pid)` 终止整组，
   先 `SIGTERM`，5s 未退再 `SIGKILL`。
+- asdf 运行时隔离：服务启动前把 `$ASDF_DATA_DIR/shims`（默认 `~/.asdf/shims`）放到
+  继承 `PATH` 的最前面，让 shim 按服务自己的 `cwd` / `.tool-versions` 选择工具版本；
+  `--env PATH=...` 可显式覆盖这一行为。
 - 启动后 1s 稳定窗口：进程在窗口内退出即判失败，返回真实状态而非乐观 running。
 - TypeScript + `commander`，无其他运行时依赖。
 ```
