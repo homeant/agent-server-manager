@@ -43,7 +43,9 @@ asvc start <name> -c "<command>" -d
 
 `-d` runs it in the background and returns immediately with an exit code. Without `-d`
 the command runs in the **foreground and blocks forever** — that mode exists for humans
-who want to watch logs live, and it will hang your turn. So for you, `-d` is mandatory.
+who want to watch logs live, and it will hang your turn. So for a single-service start,
+`-d` is mandatory. The only exception is `asvc start --all`, which is itself a finite
+background batch operation.
 
 Never start a dev server by running it directly (`npm run dev`, `npm run dev &`,
 `nohup ...`). Route it through `asvc` so it joins the managed set.
@@ -75,6 +77,10 @@ asvc restart web           # restart after a code change (won't disconnect the h
 asvc stop web              # stop the process (definition kept, can start again)
 asvc rm web                # stop and forget the service
 
+asvc start --all           # start every registered service in the background
+asvc stop --all            # stop every service, keeping definitions
+asvc rm --all --yes        # stop and forget every service (logs are retained)
+
 asvc daemon status         # is the daemon up?
 asvc daemon stop           # stop daemon + all services
 ```
@@ -82,6 +88,12 @@ asvc daemon stop           # stop daemon + all services
 `start` flags: `-c/--cmd` (command, run via shell), `-w/--cwd` (default: current dir),
 `-p/--port` (display/diagnostics only), `-e/--env KEY=VAL` (repeatable),
 `--autorestart` (respawn on crash), `-d/--detach` (background — use this).
+
+Bulk commands are always finite operations that print a per-service summary and return.
+`asvc start --all` is background-only, so it does not need `-d` and never attaches to logs.
+Bulk operations continue after individual failures and return non-zero if any service fails.
+Removing every registration requires the explicit safety flag `--yes`; `asvc rm --all`
+only previews the number of affected services. Removal retains historical log files.
 
 ## Reacting to results
 

@@ -6,6 +6,8 @@ import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 import { Client } from "./client.js";
 import {
+  BatchItemResult,
+  BatchResult,
   Event,
   LogLine,
   ServiceInfo,
@@ -41,6 +43,10 @@ const c = {
   cyan: (s: string) => (tty ? `\x1b[36m${s}\x1b[0m` : s),
   bold: (s: string) => (tty ? `\x1b[1m${s}\x1b[0m` : s),
 };
+
+const stripAnsi = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
+const padVisible = (s: string, width: number) =>
+  s + " ".repeat(Math.max(0, width - stripAnsi(s).length));
 
 function statusColor(s: ServiceStatus): string {
   switch (s) {
@@ -115,6 +121,88 @@ async function withClient<T>(fn: (client: Client) => Promise<T>): Promise<T> {
 function fail(msg: string): never {
   console.error(c.red("错误: ") + msg);
   process.exit(1);
+}
+
+function usageFail(msg: string): never {
+  console.error(c.red("错误: ") + msg);
+  process.exit(2);
+}
+
+function batchDetail(item: BatchItemResult): string {
+  switch (item.outcome) {
+    case "started":
+      return (
+        statusColor(item.info?.status ?? "running") +
+        (item.info?.pid ? c.dim(` (pid ${item.info.pid})`) : "")
+      );
+    case "stopped":
+      return statusColor(item.info?.status ?? "stopped");
+    case "removed":
+      return "已删除注册";
+    case "skipped":
+      if (item.reason === "already-running") return "已在运行";
+      if (item.reason === "already-starting") return "正在启动";
+      return "未运行";
+    case "failed": {
+      const exit = item.info?.lastExitCode;
+      return (
+        (item.error ?? "操作失败") +
+        (exit != null ? c.dim(` (exit ${exit})`) : "")
+      );
+    }
+    default: {
+      const _exhaustive: never = item.outcome;
+      return _exhaustive;
+    }
+  }
+}
+
+function printBatchResult(result: BatchResult): void {
+  if (result.items.length === 0) {
+    console.log(c.dim("暂无已注册服务，无需操作。"));
+    return;
+  }
+  const actionLabel =
+    result.action === "start" ? "启动" : result.action === "stop" ? "停止" : "删除注册";
+  console.log(
+    result.action === "remove"
+      ? `删除全部注册（${result.items.length}）`
+      : `${actionLabel}全部服务（${result.items.length}）`
+  );
+  console.log();
+  for (const item of result.items) {
+    const marker =
+      item.outcome === "failed"
+        ? c.red("✗")
+        : item.outcome === "skipped"
+          ? c.dim("-")
+          : c.green("✓");
+    const outcome =
+      item.outcome === "started"
+        ? "started"
+        : item.outcome === "stopped"
+          ? "stopped"
+          : item.outcome === "removed"
+            ? "removed"
+            : item.outcome;
+    const coloredOutcome =
+      item.outcome === "failed"
+        ? c.red(outcome)
+        : item.outcome === "skipped"
+          ? c.dim(outcome)
+          : c.green(outcome);
+    console.log(
+      `${marker} ${item.name.padEnd(16)} ${padVisible(coloredOutcome, 10)} ${batchDetail(item)}`
+    );
+  }
+  const succeeded = result.items.filter((i) =>
+    ["started", "stopped", "removed"].includes(i.outcome)
+  ).length;
+  const skipped = result.items.filter((i) => i.outcome === "skipped").length;
+  const failed = result.items.filter((i) => i.outcome === "failed").length;
+  console.log();
+  console.log(`结果：成功 ${succeeded}，跳过 ${skipped}，失败 ${failed}`);
+  if (failed > 0) process.exitCode = 1;
 }
 
 /**
@@ -334,18 +422,29 @@ program
 
 // ---- stop ----
 program
-  .command("stop <name>")
+  .command("stop [name]")
   .description("关闭服务（进程停止，定义保留，可再启动/重启）")
-  .action(async (name: string) => {
+  .option("-a, --all", "停止所有已注册服务")
+  .action(async (name: string | undefined, opts: { all?: boolean }) => {
+    if (opts.all && name) usageFail("服务名与 --all 不能同时使用");
+    if (!opts.all && !name) usageFail("请提供服务名，或使用 --all 停止全部服务");
+    if (opts.all) {
+      await withClient(async (client) => {
+        const result = await client.request<BatchResult>({ type: "stopAll" });
+        printBatchResult(result);
+      }).catch((e) => fail(e.message));
+      return;
+    }
+    const serviceName = name!;
     await withClient(async (client) => {
-      const info = await client.request<ServiceInfo>({ type: "stop", name });
+      const info = await client.request<ServiceInfo>({ type: "stop", name: serviceName });
       console.log(`${c.cyan(info.name)} 已停止 → ${statusColor(info.status)}`);
     }).catch((e) => fail(e.message));
   });
 
 // ---- start（启动即注册：给命令就自动注册并启动）----
 program
-  .command("start <name>")
+  .command("start [name]")
   .description(
     "启动服务（启动即注册：带 -c 给命令就自动注册，按名去重不会重复拉起）。\n" +
       "默认前台运行、实时刷日志，像直接敲原始命令，Ctrl-C 停止服务。\n" +
@@ -358,9 +457,10 @@ program
   .option("-e, --env <kv...>", "环境变量，形如 KEY=VAL，可多个")
   .option("--autorestart", "进程异常退出时自动重启")
   .option("-d, --detach", "后台启动并立即返回（带退出码），不占用终端")
+  .option("-a, --all", "批量启动所有已注册服务（始终后台运行）")
   .action(
     async (
-      name: string,
+      name: string | undefined,
       opts: {
         cmd?: string;
         cwd: string;
@@ -368,14 +468,35 @@ program
         env?: string[];
         autorestart?: boolean;
         detach?: boolean;
-      }
+        all?: boolean;
+      },
+      command: Command
     ) => {
-      const spec = opts.cmd ? buildSpec(name, opts.cmd, opts) : undefined;
+      if (opts.all && name) usageFail("服务名与 --all 不能同时使用");
+      if (!opts.all && !name) usageFail("请提供服务名，或使用 --all 启动全部服务");
+      if (opts.all) {
+        const hasDefinitionFlags =
+          opts.cmd !== undefined ||
+          opts.port !== undefined ||
+          opts.env !== undefined ||
+          opts.autorestart !== undefined ||
+          command.getOptionValueSource("cwd") === "cli";
+        if (hasDefinitionFlags) {
+          usageFail("--all 不能与 -c/--cmd、-w/--cwd、-p/--port、-e/--env 或 --autorestart 同时使用");
+        }
+        await withClient(async (client) => {
+          const result = await client.request<BatchResult>({ type: "startAll" });
+          printBatchResult(result);
+        }).catch((e) => fail(e.message));
+        return;
+      }
+      const serviceName = name!;
+      const spec = opts.cmd ? buildSpec(serviceName, opts.cmd, opts) : undefined;
       const onErr = (e: Error) => {
         if (!spec && /未知服务/.test(e.message)) {
           fail(
             `${e.message}\n该服务尚未注册。首次启动请用 -c 指定命令，如：` +
-              `asvc start ${name} -c "npm run dev"`
+              `asvc start ${serviceName} -c "npm run dev"`
           );
         }
         fail(e.message);
@@ -385,25 +506,50 @@ program
         await withClient(async (client) => {
           const info = spec
             ? await client.request<ServiceInfo>({ type: "register", spec, start: true })
-            : await client.request<ServiceInfo>({ type: "start", name });
+            : await client.request<ServiceInfo>({ type: "start", name: serviceName });
           await reportStart(client, info, "启动");
         }).catch(onErr);
         return;
       }
       // 前台：像原始命令一样实时刷日志，Ctrl-C 停服务
-      await startForeground(name, spec).catch(onErr);
+      await startForeground(serviceName, spec).catch(onErr);
     }
   );
 
 // ---- rm ----
 program
-  .command("rm <name>")
+  .command("rm [name]")
   .alias("remove")
   .description("移除服务（先停止再从注册表删除）")
-  .action(async (name: string) => {
+  .option("-a, --all", "删除所有服务注册（运行中的服务会先停止）")
+  .option("-y, --yes", "确认删除全部注册，仅与 --all 一起使用")
+  .action(async (name: string | undefined, opts: { all?: boolean; yes?: boolean }) => {
+    if (opts.all && name) usageFail("服务名与 --all 不能同时使用");
+    if (!opts.all && !name) usageFail("请提供服务名，或使用 --all 删除全部注册");
+    if (opts.yes && !opts.all) usageFail("--yes 只能与 --all 一起使用");
+    if (opts.all) {
+      await withClient(async (client) => {
+        if (!opts.yes) {
+          const list = await client.request<ServiceInfo[]>({ type: "list" });
+          if (list.length === 0) {
+            console.log(c.dim("暂无已注册服务，无需操作。"));
+            return;
+          }
+          console.error(`即将停止并删除 ${list.length} 个已注册服务。`);
+          console.error("服务日志不会删除。");
+          console.error(`确认执行请使用：${c.bold("asvc rm --all --yes")}`);
+          process.exitCode = 2;
+          return;
+        }
+        const result = await client.request<BatchResult>({ type: "removeAll" });
+        printBatchResult(result);
+      }).catch((e) => fail(e.message));
+      return;
+    }
+    const serviceName = name!;
     await withClient(async (client) => {
-      await client.request({ type: "remove", name });
-      console.log(`${c.cyan(name)} 已移除`);
+      await client.request({ type: "remove", name: serviceName });
+      console.log(`${c.cyan(serviceName)} 已移除`);
     }).catch((e) => fail(e.message));
   });
 
@@ -431,6 +577,7 @@ _asvc() {
       if (( CURRENT == 3 )); then
         local -a _svcs
         _svcs=( \${(f)"\$(command asvc __complete services 2>/dev/null)"} )
+        [[ \$cmd == start || \$cmd == stop || \$cmd == rm || \$cmd == remove ]] && _svcs+=(--all)
         (( \${#_svcs} )) && _describe -t services 'service' _svcs
         return
       fi
@@ -452,7 +599,16 @@ _asvc() {
         '(-p --port)'{-p,--port}'[服务端口]:port:' \\
         '*'{-e,--env}'[环境变量 KEY=VAL]:env:' \\
         '--autorestart[进程异常退出时自动重启]' \\
-        '(-d --detach)'{-d,--detach}'[后台启动并立即返回]'
+        '(-d --detach)'{-d,--detach}'[后台启动并立即返回]' \\
+        '(-a --all)'{-a,--all}'[批量启动所有已注册服务]'
+      ;;
+    stop)
+      _arguments '(-a --all)'{-a,--all}'[停止所有已注册服务]'
+      ;;
+    rm|remove)
+      _arguments \\
+        '(-a --all)'{-a,--all}'[删除所有服务注册]' \\
+        '(-y --yes)'{-y,--yes}'[确认删除全部注册]'
       ;;
     logs)
       _arguments \\
@@ -475,7 +631,13 @@ _asvc() {
   case "\$cmd" in
     start|stop|restart|logs|rm|remove)
       if [ "\$COMP_CWORD" -eq 2 ]; then
-        COMPREPLY=( \$(compgen -W "\$(asvc __complete services 2>/dev/null)" -- "\$cur") )
+        local choices="\$(asvc __complete services 2>/dev/null)"
+        case "\$cmd" in
+          start|stop|rm|remove) choices="\$choices --all" ;;
+        esac
+        COMPREPLY=( \$(compgen -W "\$choices" -- "\$cur") )
+      elif [ "\$cmd" = "rm" ] || [ "\$cmd" = "remove" ]; then
+        COMPREPLY=( \$(compgen -W "--yes" -- "\$cur") )
       fi
       ;;
     daemon)
@@ -561,15 +723,12 @@ function printStatusLine(info: ServiceInfo): void {
 
 function printTable(rows: Record<string, string>[]): void {
   const cols = Object.keys(rows[0]);
-  // 计算宽度时去除 ANSI 颜色码
-  const strip = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
   const width: Record<string, number> = {};
   for (const col of cols) {
-    width[col] = Math.max(col.length, ...rows.map((r) => strip(r[col]).length));
+    width[col] = Math.max(col.length, ...rows.map((r) => stripAnsi(r[col]).length));
   }
-  const pad = (s: string, w: number) => s + " ".repeat(Math.max(0, w - strip(s).length));
-  console.log(c.bold(cols.map((col) => pad(col, width[col])).join("  ")));
+  console.log(c.bold(cols.map((col) => padVisible(col, width[col])).join("  ")));
   for (const r of rows) {
-    console.log(cols.map((col) => pad(r[col], width[col])).join("  "));
+    console.log(cols.map((col) => padVisible(r[col], width[col])).join("  "));
   }
 }

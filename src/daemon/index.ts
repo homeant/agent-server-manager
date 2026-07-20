@@ -39,19 +39,24 @@ async function handle(sock: Socket, req: Request): Promise<void> {
       case "list":
         return reply(sock, { id: req.id, ok: true, result: sup.list() });
       case "register": {
-        const info = sup.register(req.spec);
-        if (req.start) await sup.start(req.spec.name);
-        return reply(sock, { id: req.id, ok: true, result: sup.get(req.spec.name) ?? info });
+        const info = await sup.register(req.spec, req.start);
+        return reply(sock, { id: req.id, ok: true, result: info });
       }
       case "start":
         return reply(sock, { id: req.id, ok: true, result: await sup.start(req.name) });
+      case "startAll":
+        return reply(sock, { id: req.id, ok: true, result: await sup.startAll() });
       case "stop":
         return reply(sock, { id: req.id, ok: true, result: await sup.stop(req.name) });
+      case "stopAll":
+        return reply(sock, { id: req.id, ok: true, result: await sup.stopAll() });
       case "restart":
         return reply(sock, { id: req.id, ok: true, result: await sup.restart(req.name) });
       case "remove":
         await sup.remove(req.name);
         return reply(sock, { id: req.id, ok: true, result: { removed: req.name } });
+      case "removeAll":
+        return reply(sock, { id: req.id, ok: true, result: await sup.removeAll() });
       case "logs":
         return reply(sock, { id: req.id, ok: true, result: sup.logs(req.name, req.lines) });
       case "attach": {

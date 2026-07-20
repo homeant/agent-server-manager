@@ -3,6 +3,8 @@ import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import path from "node:path";
 import {
+  BatchItemResult,
+  BatchResult,
   LogLine,
   ServiceInfo,
   ServiceSpec,
@@ -14,6 +16,7 @@ import { LOG_DIR, REGISTRY_FILE } from "../paths.js";
 const RING_SIZE = 2000; // 每个服务内存中保留的日志行数
 const STOP_GRACE_MS = 5000; // SIGTERM 后等待退出，超时则 SIGKILL
 const SETTLE_MS = 1000; // 启动后观察这段时间，确认进程没有立刻崩溃（如端口被占）
+const BATCH_CONCURRENCY = 4;
 
 interface ManagedService {
   spec: ServiceSpec;
@@ -46,6 +49,11 @@ interface ManagedService {
  */
 export class Supervisor extends EventEmitter {
   private services = new Map<string, ManagedService>();
+  /**
+   * 所有外部状态修改请求串行进入。批量操作可在内部并发，但其名单快照和执行期间
+   * 不会被另一条 register/start/stop/restart/remove 请求穿插。
+   */
+  private mutationQueue: Promise<unknown> = Promise.resolve();
 
   constructor() {
     super();
@@ -66,8 +74,15 @@ export class Supervisor extends EventEmitter {
     return this.services.has(name);
   }
 
-  /** 注册或更新一个服务定义（不自动启动） */
-  register(input: ServiceSpecInput): ServiceInfo {
+  /** 注册或更新一个服务定义；start=true 时在同一修改队列中接着启动。 */
+  register(input: ServiceSpecInput, start = false): Promise<ServiceInfo> {
+    return this.runMutation(async () => {
+      const info = this.registerNow(input);
+      return start ? this.startOne(input.name) : info;
+    });
+  }
+
+  private registerNow(input: ServiceSpecInput): ServiceInfo {
     const existing = this.services.get(input.name);
     const spec: ServiceSpec = {
       name: input.name,
@@ -93,6 +108,10 @@ export class Supervisor extends EventEmitter {
   }
 
   async start(name: string): Promise<ServiceInfo> {
+    return this.runMutation(() => this.startOne(name));
+  }
+
+  private async startOne(name: string): Promise<ServiceInfo> {
     const svc = this.must(name);
     return this.runExclusive(svc, async () => {
       if (svc.status === "running" || svc.status === "starting") {
@@ -105,6 +124,10 @@ export class Supervisor extends EventEmitter {
   }
 
   async stop(name: string): Promise<ServiceInfo> {
+    return this.runMutation(() => this.stopOne(name));
+  }
+
+  private async stopOne(name: string): Promise<ServiceInfo> {
     const svc = this.must(name);
     return this.runExclusive(svc, async () => {
       await this.stopProcess(svc);
@@ -118,6 +141,10 @@ export class Supervisor extends EventEmitter {
    * 已 attach 的终端（人）保持连接不断。
    */
   async restart(name: string): Promise<ServiceInfo> {
+    return this.runMutation(() => this.restartOne(name));
+  }
+
+  private async restartOne(name: string): Promise<ServiceInfo> {
     const svc = this.must(name);
     return this.runExclusive(svc, async () => {
       this.system(svc, "restarting...");
@@ -136,12 +163,98 @@ export class Supervisor extends EventEmitter {
   }
 
   async remove(name: string): Promise<void> {
+    await this.runMutation(() => this.removeOne(name, true));
+  }
+
+  private async removeOne(name: string, persist: boolean): Promise<void> {
     const svc = this.must(name);
     await this.runExclusive(svc, async () => {
       await this.stopProcess(svc);
       svc.logStream?.end();
       this.services.delete(name);
+      if (persist) this.persistRegistry();
+    });
+  }
+
+  startAll(): Promise<BatchResult> {
+    return this.runMutation(async () => {
+      const names = [...this.services.keys()];
+      const items = await this.mapBatch(names, async (name): Promise<BatchItemResult> => {
+        const before = this.must(name);
+        if (before.status === "running" || before.status === "starting") {
+          return {
+            name,
+            outcome: "skipped",
+            reason: before.status === "running" ? "already-running" : "already-starting",
+            info: this.toInfo(before),
+          };
+        }
+        try {
+          const info = await this.startOne(name);
+          if (info.status === "running" || info.status === "starting") {
+            return { name, outcome: "started", info };
+          }
+          return {
+            name,
+            outcome: "failed",
+            info,
+            error: `启动后状态为 ${info.status}`,
+          };
+        } catch (err) {
+          return { name, outcome: "failed", error: this.errorMessage(err) };
+        }
+      });
+      return { action: "start", items };
+    });
+  }
+
+  stopAll(): Promise<BatchResult> {
+    return this.runMutation(async () => {
+      const names = [...this.services.keys()];
+      const items = await this.mapBatch(names, async (name): Promise<BatchItemResult> => {
+        const before = this.must(name);
+        if (!before.child || before.pid === undefined) {
+          return {
+            name,
+            outcome: "skipped",
+            reason: "not-running",
+            info: this.toInfo(before),
+          };
+        }
+        try {
+          const info = await this.stopOne(name);
+          return { name, outcome: "stopped", info };
+        } catch (err) {
+          return {
+            name,
+            outcome: "failed",
+            info: this.get(name),
+            error: this.errorMessage(err),
+          };
+        }
+      });
+      return { action: "stop", items };
+    });
+  }
+
+  removeAll(): Promise<BatchResult> {
+    return this.runMutation(async () => {
+      const names = [...this.services.keys()];
+      const items = await this.mapBatch(names, async (name): Promise<BatchItemResult> => {
+        try {
+          await this.removeOne(name, false);
+          return { name, outcome: "removed" };
+        } catch (err) {
+          return {
+            name,
+            outcome: "failed",
+            info: this.get(name),
+            error: this.errorMessage(err),
+          };
+        }
+      });
       this.persistRegistry();
+      return { action: "remove", items };
     });
   }
 
@@ -151,12 +264,34 @@ export class Supervisor extends EventEmitter {
     return svc.ring.slice(-lines);
   }
 
-  /** 停止全部（daemon 退出时调用） */
-  async stopAll(): Promise<void> {
-    await Promise.all([...this.services.keys()].map((n) => this.stop(n)));
+  // ---- 内部 ----
+
+  private runMutation<T>(fn: () => Promise<T> | T): Promise<T> {
+    const run = this.mutationQueue.then(fn, fn);
+    this.mutationQueue = run.catch(() => undefined);
+    return run;
   }
 
-  // ---- 内部 ----
+  /** 有界并发，结果顺序始终与注册表快照一致。 */
+  private async mapBatch<T>(names: string[], fn: (name: string) => Promise<T>): Promise<T[]> {
+    const results = new Array<T>(names.length);
+    let next = 0;
+    const worker = async () => {
+      for (;;) {
+        const index = next++;
+        if (index >= names.length) return;
+        results[index] = await fn(names[index]);
+      }
+    };
+    await Promise.all(
+      Array.from({ length: Math.min(BATCH_CONCURRENCY, names.length) }, () => worker())
+    );
+    return results;
+  }
+
+  private errorMessage(err: unknown): string {
+    return err instanceof Error ? err.message : String(err);
+  }
 
   private newService(spec: ServiceSpec): ManagedService {
     return {
@@ -299,10 +434,12 @@ export class Supervisor extends EventEmitter {
         this.system(svc, "autorestart...");
         svc.restarts++;
         setTimeout(() => {
-          // 仍存在且未被人为启动才重启
-          if (this.services.get(svc.spec.name) === svc && svc.status === "exited") {
-            this.spawnProcess(svc);
-          }
+          void this.runMutation(() => {
+            // 仍存在且未被人为启动才重启
+            if (this.services.get(svc.spec.name) === svc && svc.status === "exited") {
+              this.spawnProcess(svc);
+            }
+          });
         }, 500);
       }
     });

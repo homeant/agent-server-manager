@@ -84,12 +84,35 @@ asvc restart web          # 重启（前台/跟随的终端都不会断）
 asvc stop web             # 停止（保留定义，可再启动）
 asvc rm web               # 移除（先停后删）
 
+asvc start --all          # 后台启动所有已注册服务，完成后返回汇总
+asvc stop --all           # 停止所有服务，保留定义
+asvc rm --all --yes       # 停止并删除所有注册（日志保留）
+
 asvc daemon status        # 看 daemon 是否运行
 asvc daemon stop          # 停 daemon（会先关闭所有服务）
 ```
 
 `start` 参数：`-c/--cmd`（命令，经 shell 执行）、`-w/--cwd`（默认当前目录）、
 `-p/--port`（仅展示/排查）、`-e/--env KEY=VAL`（可多个）、`--autorestart`、`-d/--detach`（后台）。
+
+### 批量管理
+
+批量操作复用原有命令的 `--all` 参数，不需要记额外的 `start-all` 命令：
+
+```bash
+asvc start --all          # 始终是后台批量模式，不会占住终端跟随日志
+asvc stop --all           # 已停止的服务会跳过
+asvc rm --all             # 只预览影响范围，不执行
+asvc rm --all --yes       # 确认：先停止，再删除所有注册
+```
+
+daemon 会在一次批量请求开始时固定服务名单，最多同时处理 4 个服务；单个服务失败
+不会阻断其他服务。结果按注册顺序逐项展示，只要有一项失败，命令退出码就是 1。
+空注册表属于成功的无操作，退出码为 0。
+
+`rm --all --yes` 只删除服务定义，保留 `$ASVC_HOME/logs` 中的历史日志；如果某个
+运行中服务停止失败，该项不会从注册表移除，以免留下无人管理的进程。`start --all`
+不能与 `-c/-w/-p/-e/--autorestart` 同时使用。
 
 ## 启动失败 / 端口冲突，agent 当场知道
 

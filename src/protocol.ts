@@ -52,6 +52,25 @@ export interface LogLine {
   ts: number;
 }
 
+export type BatchAction = "start" | "stop" | "remove";
+export type BatchOutcome = "started" | "stopped" | "removed" | "skipped" | "failed";
+export type BatchSkipReason = "already-running" | "already-starting" | "not-running";
+
+/** 批量启停/移除的单项结果。批量操作尽最大努力，不因单项失败中断。 */
+export interface BatchItemResult {
+  name: string;
+  outcome: BatchOutcome;
+  /** 启停或跳过后的状态；移除成功时服务已不存在，因此省略。 */
+  info?: ServiceInfo;
+  reason?: BatchSkipReason;
+  error?: string;
+}
+
+export interface BatchResult {
+  action: BatchAction;
+  items: BatchItemResult[];
+}
+
 // ---- 请求 ----
 
 export type Request =
@@ -59,9 +78,12 @@ export type Request =
   | { id: number; type: "list" }
   | { id: number; type: "register"; spec: ServiceSpecInput; start?: boolean }
   | { id: number; type: "start"; name: string }
+  | { id: number; type: "startAll" }
   | { id: number; type: "stop"; name: string }
+  | { id: number; type: "stopAll" }
   | { id: number; type: "restart"; name: string }
   | { id: number; type: "remove"; name: string }
+  | { id: number; type: "removeAll" }
   | { id: number; type: "logs"; name: string; lines?: number }
   | { id: number; type: "attach"; name: string; backlog?: number }
   | { id: number; type: "detach"; name: string }

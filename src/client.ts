@@ -15,8 +15,10 @@ import { DAEMON_LOG, SOCKET_PATH, SVC_HOME } from "./paths.js";
 
 type EventHandler = (ev: Event) => void;
 
-/** 请求超时。最慢的正常路径是 restart（SIGTERM 宽限 5s + 稳定窗口 1s），留足余量 */
+/** 单服务请求超时。restart 最慢包含 SIGTERM 宽限 5s + 稳定窗口 1s。 */
 const REQUEST_TIMEOUT_MS = 30_000;
+/** 批量请求会分组处理任意数量的服务，给出更宽裕的上限。 */
+const BATCH_REQUEST_TIMEOUT_MS = 5 * 60_000;
 
 /** 分发式 Omit：保留联合各成员各自的字段（去掉 id） */
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown
@@ -105,6 +107,10 @@ export class Client {
     const full = { ...req, id } as Request;
     return new Promise<T>((resolve, reject) => {
       if (this.closed) return reject(new Error("连接已关闭"));
+      const timeout =
+        req.type === "startAll" || req.type === "stopAll" || req.type === "removeAll"
+          ? BATCH_REQUEST_TIMEOUT_MS
+          : REQUEST_TIMEOUT_MS;
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error(`请求超时（${req.type}）：daemon 无响应`));
