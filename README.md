@@ -46,10 +46,12 @@ npm install -g @homeant/asvc
 装完 `asvc` / `asvc-daemon` 就在 PATH 上，agent 和你都能直接敲 `asvc`。
 daemon 会在首次执行任意 `asvc` 命令时**自动拉起**，无需手动启动。
 
-如果使用 asdf，`npm install -g` 的包按 Node 版本隔离：只在某个 Node 版本下安装
-`@homeant/asvc`，会导致其他版本的项目目录里 asdf shim 拒绝执行 `asvc`。短期可以在每个
-常用 Node 版本下各安装一次，或从已安装版本的 `bin/asvc` 建一个不经过 asdf shim 的稳定
-入口。不要通过切换到另一个项目目录来调用 `asvc`；这只会掩盖控制端 shim 问题。
+如果使用 asdf，`npm install -g` 的包按 Node 版本隔离：需要从多个 Node 版本的项目目录
+直接调用 `asvc` 时，应在各版本下分别安装相同版本的 `@homeant/asvc`，再执行
+`asdf reshim nodejs <版本>`。这些 CLI 仍连接同一个全局 daemon，不会各起一个 daemon。
+不要通过切换到另一个项目目录来绕过 shim 错误；这只改变控制端解析，不能证明服务运行时。
+从 asvc 0.3.4 起，服务定义保持裸命令（如 `npm run dev`）即可，daemon 会按服务的
+`cwd` / `.tool-versions` 选择运行时。
 
 ### Shell 补全（Tab 提示）
 

@@ -62,24 +62,62 @@ npm install -g @homeant/asvc
 (If you are working inside the agent-server-manager repo itself, `npm run build && npm link`
 uses the local build instead.)
 
-If asdf reports that `asvc` exists only under a different Node version, do **not** change
-to another project directory just to make the shim run. That changes only the control CLI's
-resolution and does not select the managed service's runtime. Use a stable `asvc` executable
-outside the asdf shims, or install `@homeant/asvc` under the current Node version.
+### asdf and multiple Node.js versions
 
-For released `asvc` versions that do not yet isolate the service runtime, make the registered
-command explicit whenever the service cwd has `.tool-versions`:
+asdf isolates globally installed npm packages by Node.js version. If projects using multiple
+Node.js versions need to invoke `asvc` directly, install the same `@homeant/asvc` version under
+each of those Node.js versions. These CLI installations still connect to one global asvc daemon;
+they do not create one daemon per Node.js version.
+
+Before using asvc in a project selected by `.tool-versions`, check the current coverage:
 
 ```bash
-ASVC_BIN=/absolute/path/to/asvc-outside-asdf-shims
-ASDF_BIN="$(command -v asdf)"
-"$ASVC_BIN" start web -c "$ASDF_BIN exec npm run dev" --cwd /absolute/path/to/web --port 3000 -d
-"$ASVC_BIN" restart web
+asdf current nodejs
+asdf shimversions asvc
+asvc --version
 ```
 
-Resolve both binaries to absolute, non-shim paths before registration. Updating a running
-service's definition does not change its current process; restart it, then verify the expected
-runtime and the actual managed process executable:
+If `asvc` is missing under the selected Node.js version, install and reshim it there:
+
+```bash
+asdf exec npm install -g @homeant/asvc@latest
+asdf reshim nodejs <current-version>
+```
+
+Repeat this for every Node.js version whose project directories will invoke `asvc`, and keep
+the installed asvc versions aligned. If the asdf shim says `asvc` exists only under another
+Node.js version, do **not** change to another project directory to make it run. That only changes
+control-CLI resolution and says nothing about the managed service's runtime.
+
+With asvc 0.3.4 or newer, register the normal bare service command. The daemon puts the asdf
+shims first for the service process, so the service's `cwd` and `.tool-versions` select Node.js:
+
+```bash
+asvc start web -c "npm run dev" --cwd /absolute/path/to/web --port 3000 -d
+```
+
+Do not add `asdf exec` to service definitions on 0.3.4+ unless there is a specific override.
+An explicit `--env PATH=...` intentionally takes precedence over asvc's automatic shim setup.
+
+For asvc 0.3.3 or older, use an absolute asdf binary in the registered command as a temporary
+compatibility measure, then restart the service so the updated definition takes effect:
+
+```bash
+ASDF_BIN="$(command -v asdf)"
+asvc start web -c "$ASDF_BIN exec npm run dev" --cwd /absolute/path/to/web --port 3000 -d
+asvc restart web
+```
+
+Updating the npm package does not replace an already running daemon. When upgrading asvc itself,
+plan for a brief service interruption: stop the daemon, then start all registered services so the
+new daemon code is loaded:
+
+```bash
+asvc daemon stop
+asvc start --all
+```
+
+Finally verify the expected runtime and actual process executable:
 
 ```bash
 cd /absolute/path/to/web
