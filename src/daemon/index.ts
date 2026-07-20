@@ -37,7 +37,7 @@ async function handle(sock: Socket, req: Request): Promise<void> {
       case "ping":
         return reply(sock, { id: req.id, ok: true, result: { pong: true } });
       case "list":
-        return reply(sock, { id: req.id, ok: true, result: sup.list() });
+        return reply(sock, { id: req.id, ok: true, result: await sup.list() });
       case "register": {
         const info = await sup.register(req.spec, req.start);
         return reply(sock, { id: req.id, ok: true, result: info });

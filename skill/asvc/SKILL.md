@@ -70,7 +70,7 @@ asvc start web -c "npm run dev" --port 3000 -d        # cwd defaults to current 
 asvc start api -c "go run ." --cwd /path/api --env KEY=VAL -d
 asvc start web -d                                      # already-registered → omit -c
 
-asvc list                  # all services + status (running/exited/...) 
+asvc list                  # all services + status + process-group CPU/memory usage
 asvc logs web              # last 200 log lines (snapshot, returns)
 asvc logs web -n 500       # last 500 lines
 asvc restart web           # restart after a code change (won't disconnect the human)

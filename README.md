@@ -76,7 +76,7 @@ asvc start web                                           # 已注册过则可省
 asvc start web -c "npm run dev" --port 3000 -d
 asvc start api -c "go run ." --cwd /path/api --env KEY=VAL --autorestart -d
 
-asvc list                 # 列出所有服务及状态
+asvc list                 # 列出所有服务、状态及进程组 CPU/内存用量
 asvc logs web             # 看 web 最近 200 行日志
 asvc logs web -f          # 持续跟随（agent 重启服务也不断开）
 asvc logs web -n 500      # 看最近 500 行

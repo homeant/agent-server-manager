@@ -82,6 +82,18 @@ function fmtUptime(startedAt?: number): string {
   return `${h}h${m % 60}m`;
 }
 
+function fmtCpu(percent?: number): string {
+  return percent === undefined ? "-" : `${percent.toFixed(1)}%`;
+}
+
+function fmtMemory(bytes?: number): string {
+  if (bytes === undefined) return "-";
+  const mib = bytes / (1024 * 1024);
+  return mib < 1024
+    ? `${mib.toFixed(mib < 10 ? 1 : 0)}M`
+    : `${(mib / 1024).toFixed(1)}G`;
+}
+
 /**
  * 路径展示：home 缩成 ~；超长时收缩中间（保头部根段 + 尾部目录名），
  * 头尾都有信息量，比直接截尾更利于一眼认出是哪个项目。
@@ -359,6 +371,8 @@ program
         NAME: s.name,
         STATUS: statusColor(s.status),
         PID: s.pid ? String(s.pid) : "-",
+        CPU: fmtCpu(s.cpuPercent),
+        MEMORY: fmtMemory(s.memoryBytes),
         UPTIME: s.status === "running" ? fmtUptime(s.startedAt) : "-",
         PORT: s.port ? String(s.port) : "-",
         AUTO_RESTARTS: String(s.restarts),

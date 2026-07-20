@@ -33,6 +33,10 @@ export interface ServiceSpec {
 export interface ServiceInfo extends ServiceSpec {
   status: ServiceStatus;
   pid?: number;
+  /** 进程组（含子进程）的 CPU 使用率，仅 list 查询时采集 */
+  cpuPercent?: number;
+  /** 进程组（含子进程）的常驻内存字节数，仅 list 查询时采集 */
+  memoryBytes?: number;
   /** 本次启动的时间戳(ms)，running 时有效 */
   startedAt?: number;
   /** 最近一次退出码 */

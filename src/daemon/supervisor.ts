@@ -1,4 +1,4 @@
-import { spawn, ChildProcess } from "node:child_process";
+import { execFile, spawn, ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import path from "node:path";
@@ -17,6 +17,11 @@ const RING_SIZE = 2000; // 每个服务内存中保留的日志行数
 const STOP_GRACE_MS = 5000; // SIGTERM 后等待退出，超时则 SIGKILL
 const SETTLE_MS = 1000; // 启动后观察这段时间，确认进程没有立刻崩溃（如端口被占）
 const BATCH_CONCURRENCY = 4;
+
+interface ProcessUsage {
+  cpuPercent: number;
+  memoryBytes: number;
+}
 
 interface ManagedService {
   spec: ServiceSpec;
@@ -61,8 +66,14 @@ export class Supervisor extends EventEmitter {
     this.loadRegistry();
   }
 
-  list(): ServiceInfo[] {
-    return [...this.services.values()].map((s) => this.toInfo(s));
+  async list(): Promise<ServiceInfo[]> {
+    const services = [...this.services.values()];
+    const usage = await this.readProcessUsage();
+    return services.map((s) => {
+      const info = this.toInfo(s);
+      const stats = s.pid === undefined ? undefined : usage.get(s.pid);
+      return stats ? { ...info, ...stats } : info;
+    });
   }
 
   get(name: string): ServiceInfo | undefined {
@@ -291,6 +302,40 @@ export class Supervisor extends EventEmitter {
 
   private errorMessage(err: unknown): string {
     return err instanceof Error ? err.message : String(err);
+  }
+
+  /**
+   * detached 服务的 pid 同时也是进程组 id。一次 ps 扫描汇总所有进程组，
+   * 因而 npm/node 等命令派生出来的子进程也计入服务资源使用量。
+   * ps 不可用或采集失败时返回空结果，不影响 list 的基础状态展示。
+   */
+  private readProcessUsage(): Promise<Map<number, ProcessUsage>> {
+    return new Promise((resolve) => {
+      execFile(
+        "ps",
+        ["-axo", "pgid=,pcpu=,rss="],
+        {
+          encoding: "utf8",
+          env: { ...process.env, LC_ALL: "C" },
+          maxBuffer: 10 * 1024 * 1024,
+          timeout: 2000,
+        },
+        (err, stdout) => {
+          const usage = new Map<number, ProcessUsage>();
+          if (err) return resolve(usage);
+          for (const line of stdout.split("\n")) {
+            const match = line.trim().match(/^(\d+)\s+([\d.]+)\s+(\d+)$/);
+            if (!match) continue;
+            const pgid = Number(match[1]);
+            const current = usage.get(pgid) ?? { cpuPercent: 0, memoryBytes: 0 };
+            current.cpuPercent += Number(match[2]);
+            current.memoryBytes += Number(match[3]) * 1024;
+            usage.set(pgid, current);
+          }
+          resolve(usage);
+        }
+      );
+    });
   }
 
   private newService(spec: ServiceSpec): ManagedService {
