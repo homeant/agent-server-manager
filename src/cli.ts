@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 import { Client } from "./client.js";
+import { installSystemEntry } from "./system-entry.js";
 import {
   BatchItemResult,
   BatchResult,
@@ -580,6 +581,7 @@ _asvc() {
     'list:列出所有服务'
     'rm:移除服务'
     'daemon:管理后台 daemon'
+    'setup-entry:安装供非登录 shell 使用的稳定命令入口'
   )
   if (( CURRENT == 2 )); then
     _describe -t commands 'asvc command' _asvc_cmds
@@ -629,6 +631,11 @@ _asvc() {
         '(-f --follow)'{-f,--follow}'[持续跟随]' \\
         '(-n --lines)'{-n,--lines}'[显示最近 N 行]:lines:'
       ;;
+    setup-entry)
+      _arguments \\
+        '--bin-dir[入口安装目录]:dir:_files -/' \\
+        '--force[覆盖已存在的非 asvc 入口]'
+      ;;
   esac
 }
 compdef _asvc asvc
@@ -638,7 +645,7 @@ const COMPLETION_BASH = `
 _asvc() {
   local cur="\${COMP_WORDS[COMP_CWORD]}"
   if [ "\$COMP_CWORD" -eq 1 ]; then
-    COMPREPLY=( \$(compgen -W "start stop restart logs list ls rm daemon" -- "\$cur") )
+    COMPREPLY=( \$(compgen -W "start stop restart logs list ls rm daemon setup-entry" -- "\$cur") )
     return
   fi
   local cmd="\${COMP_WORDS[1]}"
@@ -660,6 +667,9 @@ _asvc() {
     completion)
       [ "\$COMP_CWORD" -eq 2 ] && COMPREPLY=( \$(compgen -W "zsh bash" -- "\$cur") )
       ;;
+    setup-entry)
+      COMPREPLY=( \$(compgen -W "--bin-dir --force" -- "\$cur") )
+      ;;
   esac
 }
 complete -F _asvc asvc
@@ -672,6 +682,28 @@ program
     if (shell === "zsh") console.log(COMPLETION_ZSH);
     else if (shell === "bash") console.log(COMPLETION_BASH);
     else fail(`不支持的 shell: ${shell}（支持 zsh / bash）`);
+  });
+
+// ---- stable entry for non-login shells ----
+program
+  .command("setup-entry")
+  .description(
+    "安装稳定的 asvc 命令入口（默认与 asdf 同目录），供不加载 shell profile 的 agent 使用"
+  )
+  .option("--bin-dir <dir>", "入口安装目录；默认使用当前 asdf 可执行文件所在目录")
+  .option("--force", "覆盖已存在的非 asvc 入口")
+  .action((opts: { binDir?: string; force?: boolean }) => {
+    try {
+      const result = installSystemEntry({ binDir: opts.binDir, force: opts.force });
+      console.log(
+        result.changed
+          ? `${c.green("已安装稳定入口")}: ${result.path}`
+          : `${c.dim("稳定入口已是最新")}: ${result.path}`
+      );
+      console.log(c.dim(`入口通过 ${result.asdfPath} exec asvc 按当前 cwd 解析 CLI。`));
+    } catch (err) {
+      fail(err instanceof Error ? err.message : String(err));
+    }
   });
 
 // 补全脚本的回调入口：列出已注册服务名（daemon 未运行则静默输出空，绝不 auto-spawn）

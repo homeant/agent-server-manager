@@ -52,15 +52,55 @@ Never start a dev server by running it directly (`npm run dev`, `npm run dev &`,
 
 ## Resolving the `asvc` command
 
-`asvc` comes from the npm package `@homeant/asvc`. It should already be on `PATH`.
-If `command -v asvc` finds nothing, install it globally:
+`asvc` comes from the npm package `@homeant/asvc`. Resolve it before deciding to install.
+In agent or Codex non-login shells, `PATH` may omit asdf's shim directory even when asvc is
+already installed. Never reinstall solely because `command -v asvc` returns nothing.
+
+Use this diagnostic order:
 
 ```bash
-npm install -g @homeant/asvc
+command -v asvc || true
+command -v asdf || true
+asdf current nodejs 2>/dev/null || true
+asdf shimversions asvc 2>/dev/null || true
+asdf which asvc 2>/dev/null || true
 ```
 
-(If you are working inside the agent-server-manager repo itself, `npm run build && npm link`
-uses the local build instead.)
+Interpret the result as follows:
+
+- `command -v asvc` succeeds: invoke bare `asvc`.
+- Bare asvc is missing but `asdf which asvc` succeeds: asvc is installed for the selected Node.js
+  version and only the shim PATH is missing. For an immediate command, invoke
+  `asdf exec asvc <args>`; do not reinstall.
+- `asdf shimversions asvc` lists versions but `asdf which asvc` fails: asvc exists only under a
+  different Node.js version. Install it under the currently selected version.
+- Neither asdf check finds asvc: install `@homeant/asvc` under the selected Node.js version.
+
+For asvc 0.3.6+, install a stable entry for future non-login shells:
+
+```bash
+asdf exec asvc setup-entry
+hash -r 2>/dev/null || true
+command -v asvc
+asvc --version
+```
+
+`setup-entry` installs a small wrapper next to the detected asdf executable—typically
+`/opt/homebrew/bin/asvc` for Homebrew asdf. The wrapper uses the detected absolute asdf path and
+executes `asdf exec asvc`, so it hardcodes neither the user home nor a Node.js version. It refuses
+to overwrite an unrelated command unless explicitly given `--force`.
+
+If installation is actually required from a non-login shell, first expose the selected Node.js
+bin directory so both npm and its `#!/usr/bin/env node` interpreter resolve reliably:
+
+```bash
+ASVC_NODE_BIN_DIR="$(dirname "$(asdf which node)")"
+PATH="$ASVC_NODE_BIN_DIR:$PATH" npm install -g @homeant/asvc@latest
+asdf reshim nodejs <current-version>
+```
+
+(If you are working inside the agent-server-manager repo itself, build and link using the same
+selected-Node PATH technique.)
 
 ### asdf and multiple Node.js versions
 
@@ -80,7 +120,8 @@ asvc --version
 If `asvc` is missing under the selected Node.js version, install and reshim it there:
 
 ```bash
-asdf exec npm install -g @homeant/asvc@latest
+ASVC_NODE_BIN_DIR="$(dirname "$(asdf which node)")"
+PATH="$ASVC_NODE_BIN_DIR:$PATH" npm install -g @homeant/asvc@latest
 asdf reshim nodejs <current-version>
 ```
 

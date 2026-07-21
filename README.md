@@ -43,8 +43,33 @@ agent 在另一头 `asvc restart web`，daemon 只是把底层进程换了一个
 npm install -g @homeant/asvc
 ```
 
-装完 `asvc` / `asvc-daemon` 就在 PATH 上，agent 和你都能直接敲 `asvc`。
+在正常加载 npm 全局 bin/shims 的 shell 中，装完后 `asvc` / `asvc-daemon` 会在 PATH 上。
 daemon 会在首次执行任意 `asvc` 命令时**自动拉起**，无需手动启动。
+
+### asdf 与非登录 shell
+
+Codex/agent 的非登录 shell 可能不加载用户 profile，因此 `PATH` 中没有
+`~/.asdf/shims`。此时 `command -v asvc` 为空并不代表未安装。先检查：
+
+```bash
+command -v asvc || true
+asdf shimversions asvc
+asdf which asvc
+```
+
+如果 `asdf which asvc` 成功，直接使用 `asdf exec asvc <参数>` 即可，不要重复安装。
+从 asvc 0.3.6 起，可以一次性安装稳定入口：
+
+```bash
+asdf exec asvc setup-entry
+hash -r
+asvc --version
+```
+
+入口默认安装到 `asdf` 可执行文件所在目录；Homebrew 安装的 asdf 通常会得到
+`/opt/homebrew/bin/asvc`。入口内部调用检测到的绝对路径 `asdf exec asvc`，不硬编码
+用户 home 或 Node 版本，因此在不加载 shell profile 时仍可用，并继续按当前 cwd 选择
+对应 Node 下安装的 asvc。
 
 如果使用 asdf，`npm install -g` 的包按 Node 版本隔离：需要从多个 Node 版本的项目目录
 直接调用 `asvc` 时，应在各版本下分别安装相同版本的 `@homeant/asvc`，再执行
@@ -97,6 +122,7 @@ asvc rm --all --yes       # 停止并删除所有注册（日志保留）
 
 asvc daemon status        # 看 daemon 是否运行
 asvc daemon stop          # 停 daemon（会先关闭所有服务）
+asvc setup-entry          # 安装非登录 shell 可用的稳定入口
 ```
 
 `start` 参数：`-c/--cmd`（命令，经 shell 执行）、`-w/--cwd`（默认当前目录）、
