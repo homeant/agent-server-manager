@@ -132,7 +132,9 @@ jobs:
             if npm view "$name@${GITHUB_REF_NAME#v}" version >/dev/null 2>&1; then
               echo "$name@${GITHUB_REF_NAME#v} already exists; skipping"
             else
-              npm publish "$package" --provenance
+              # Prefix the relative tarball path so npm does not parse
+              # release/... as a GitHub shorthand package spec.
+              npm publish "./$package" --provenance
             fi
           done
 
