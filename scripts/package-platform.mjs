@@ -69,7 +69,23 @@ const archive = path.join(
 );
 fs.rmSync(archive, { force: true });
 if (process.platform === "win32") {
-  run("tar.exe", ["-a", "-c", "-f", archive, "-C", releaseDir, executable]);
+  // Windows tar treats a drive-letter path such as D:\\... as a remote
+  // archive spec (host:path). Keep both paths relative to the repository so
+  // the same command works from GitHub Actions' Windows checkout drive.
+  const archiveRelative = path.relative(root, archive).split(path.sep).join("/");
+  const releaseDirRelative = path
+    .relative(root, releaseDir)
+    .split(path.sep)
+    .join("/");
+  run("tar.exe", [
+    "-a",
+    "-c",
+    "-f",
+    archiveRelative,
+    "-C",
+    releaseDirRelative,
+    executable,
+  ]);
 } else {
   run("tar", ["-czf", archive, "-C", releaseDir, executable]);
 }
