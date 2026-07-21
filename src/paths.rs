@@ -11,6 +11,7 @@ pub struct Paths {
     pub lock_file: PathBuf,
     pub registry: PathBuf,
     pub log_dir: PathBuf,
+    #[cfg(unix)]
     pub daemon_log: PathBuf,
 }
 
@@ -30,6 +31,7 @@ impl Paths {
             lock_file: home.join("daemon.lock"),
             registry: home.join("registry.json"),
             log_dir: home.join("logs"),
+            #[cfg(unix)]
             daemon_log: home.join("daemon.log"),
             home,
         }

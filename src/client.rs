@@ -1,8 +1,9 @@
+use std::{collections::VecDeque, fs, time::Duration};
+
+#[cfg(unix)]
 use std::{
-    collections::VecDeque,
-    fs::{self, OpenOptions},
+    fs::OpenOptions,
     process::{Command, Stdio},
-    time::Duration,
 };
 
 use anyhow::{Context, Result, anyhow};
@@ -15,8 +16,6 @@ use tokio::{
 
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
-#[cfg(windows)]
-use std::os::windows::process::CommandExt;
 #[cfg(windows)]
 use tokio::net::TcpStream;
 #[cfg(unix)]
@@ -156,6 +155,7 @@ impl Client {
     }
 }
 
+#[cfg(unix)]
 fn spawn_daemon(paths: &Paths) -> Result<()> {
     fs::create_dir_all(&paths.home)?;
     let stdout = OpenOptions::new()
@@ -170,7 +170,6 @@ fn spawn_daemon(paths: &Paths) -> Result<()> {
         .stdin(Stdio::null())
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(stderr));
-    #[cfg(unix)]
     unsafe {
         command.pre_exec(|| {
             if libc::setsid() < 0 {
@@ -179,11 +178,65 @@ fn spawn_daemon(paths: &Paths) -> Result<()> {
             Ok(())
         });
     }
-    #[cfg(windows)]
-    command.creation_flags(0x0000_0008 | 0x0000_0200 | 0x0800_0000);
     let child = command.spawn().context("无法启动 daemon")?;
     // daemon owns its own session; dropping Child does not terminate it.
     drop(child);
+    Ok(())
+}
+
+#[cfg(windows)]
+fn spawn_daemon(paths: &Paths) -> Result<()> {
+    use std::{mem::size_of, os::windows::ffi::OsStrExt, ptr};
+    use windows_sys::Win32::{
+        Foundation::CloseHandle,
+        System::Threading::{
+            CREATE_NEW_PROCESS_GROUP, CREATE_NO_WINDOW, CreateProcessW, DETACHED_PROCESS,
+            PROCESS_INFORMATION, STARTUPINFOW,
+        },
+    };
+
+    fs::create_dir_all(&paths.home)?;
+    let executable = std::env::current_exe()?;
+    let application: Vec<u16> = executable
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect();
+    let mut command_line = vec![b'"' as u16];
+    command_line.extend(executable.as_os_str().encode_wide());
+    command_line.push(b'"' as u16);
+    command_line.extend(" __daemon".encode_utf16());
+    command_line.push(0);
+    let startup = STARTUPINFOW {
+        cb: size_of::<STARTUPINFOW>() as u32,
+        ..Default::default()
+    };
+    let mut process = PROCESS_INFORMATION::default();
+    // Command::spawn can leave the calling process's captured stdout/stderr handles open on
+    // Windows. A daemon holding those handles prevents agents and test runners from observing
+    // EOF after the CLI exits. CreateProcessW with bInheritHandles=FALSE gives the detached
+    // daemon no caller-owned pipes while still inheriting the caller's environment.
+    let created = unsafe {
+        CreateProcessW(
+            application.as_ptr(),
+            command_line.as_mut_ptr(),
+            ptr::null(),
+            ptr::null(),
+            0,
+            DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW,
+            ptr::null(),
+            ptr::null(),
+            &startup,
+            &mut process,
+        )
+    };
+    if created == 0 {
+        return Err(std::io::Error::last_os_error()).context("无法启动 daemon");
+    }
+    unsafe {
+        CloseHandle(process.hThread);
+        CloseHandle(process.hProcess);
+    }
     Ok(())
 }
 

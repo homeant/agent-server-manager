@@ -34,9 +34,9 @@ jobs:
     env:
       MACOSX_DEPLOYMENT_TARGET: "11.0"
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v6
         with:
           node-version: 20
           cache: npm
@@ -54,6 +54,7 @@ jobs:
       - run: npm ci --ignore-scripts --omit=optional
       - run: node scripts/check-release-version.mjs
       - run: cargo test --locked
+        timeout-minutes: 3
       - run: cargo clippy --all-targets --locked -- -D warnings
 
       - name: Build native executable
@@ -73,12 +74,13 @@ jobs:
 
       - name: Smoke-test npm launcher and installed package
         run: npm run test:native
+        timeout-minutes: 3
 
       - name: Pack native npm package
         shell: bash
         run: npm pack "./npm/asvc-${{ matrix.platform }}" --pack-destination release
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: build-${{ matrix.platform }}
           if-no-files-found: error
@@ -96,9 +98,9 @@ jobs:
       contents: write
       id-token: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v6
         with:
           node-version: 20
           registry-url: https://registry.npmjs.org
@@ -106,7 +108,7 @@ jobs:
 
       - run: npm ci --ignore-scripts --omit=optional
 
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v8
         with:
           pattern: build-*
           merge-multiple: true
