@@ -190,8 +190,13 @@ fn registration_captures_the_calling_users_path_for_later_restarts() {
     );
     fixture.run(&["stop", "path-probe"]);
 
-    let registry = fs::read_to_string(fixture.asvc_home.join("registry.json")).unwrap();
-    assert!(registry.contains(&caller_path));
+    let registry: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(fixture.asvc_home.join("registry.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        registry[0]["env"]["PATH"].as_str(),
+        Some(caller_path.as_str())
+    );
 }
 
 fn configure_command(command: &mut Command, home: &Path, asvc_home: &Path, path: &str) {
