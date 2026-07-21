@@ -688,19 +688,32 @@ program
 program
   .command("setup-entry")
   .description(
-    "安装稳定的 asvc 命令入口（默认与 asdf 同目录），供不加载 shell profile 的 agent 使用"
+    "安装与 Node 版本管理器无关的稳定 asvc 入口，供不加载 shell profile 的 agent 使用"
   )
-  .option("--bin-dir <dir>", "入口安装目录；默认使用当前 asdf 可执行文件所在目录")
+  .option("--bin-dir <dir>", "入口安装目录；默认使用 Homebrew bin 或 ~/.local/bin")
   .option("--force", "覆盖已存在的非 asvc 入口")
   .action((opts: { binDir?: string; force?: boolean }) => {
     try {
-      const result = installSystemEntry({ binDir: opts.binDir, force: opts.force });
+      const result = installSystemEntry({
+        binDir: opts.binDir,
+        force: opts.force,
+        nodePath: process.execPath,
+        cliPath: fileURLToPath(import.meta.url),
+      });
       console.log(
         result.changed
           ? `${c.green("已安装稳定入口")}: ${result.path}`
           : `${c.dim("稳定入口已是最新")}: ${result.path}`
       );
-      console.log(c.dim(`入口通过 ${result.asdfPath} exec asvc 按当前 cwd 解析 CLI。`));
+      console.log(c.dim(`Node: ${result.nodePath}`));
+      console.log(c.dim(`asvc CLI: ${result.cliPath}`));
+      if (!result.binDirOnPath) {
+        console.warn(
+          c.yellow(
+            `注意：${path.dirname(result.path)} 当前不在 PATH；请加入非登录 shell 的 PATH，或用 --bin-dir 选择已有目录。`
+          )
+        );
+      }
     } catch (err) {
       fail(err instanceof Error ? err.message : String(err));
     }

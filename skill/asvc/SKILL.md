@@ -53,44 +53,96 @@ Never start a dev server by running it directly (`npm run dev`, `npm run dev &`,
 ## Resolving the `asvc` command
 
 `asvc` comes from the npm package `@homeant/asvc`. Resolve it before deciding to install.
-In agent or Codex non-login shells, `PATH` may omit asdf's shim directory even when asvc is
-already installed. Never reinstall solely because `command -v asvc` returns nothing.
+In agent or Codex non-login shells, `PATH` may omit the selected Node/global npm bin supplied by
+asdf, nvm, fnm, Volta, or another manager even when asvc is already installed. Never reinstall
+solely because `command -v asvc` returns nothing, and never assume the customer uses asdf.
 
 Use this diagnostic order:
 
 ```bash
 command -v asvc || true
+command -v node || true
+command -v npm || true
 command -v asdf || true
-asdf current nodejs 2>/dev/null || true
-asdf shimversions asvc 2>/dev/null || true
-asdf which asvc 2>/dev/null || true
+
+# A previous setup-entry may exist even when its directory is still absent from PATH.
+for candidate in \
+  "${XDG_BIN_HOME:-$HOME/.local/bin}/asvc" \
+  /opt/homebrew/bin/asvc \
+  /usr/local/bin/asvc; do
+  if [ -x "$candidate" ]; then
+    "$candidate" --version
+  fi
+done
+
+if command -v asdf >/dev/null 2>&1; then
+  asdf current nodejs 2>/dev/null || true
+  asdf shimversions asvc 2>/dev/null || true
+  asdf which asvc 2>/dev/null || true
+fi
 ```
 
 Interpret the result as follows:
 
 - `command -v asvc` succeeds: invoke bare `asvc`.
-- Bare asvc is missing but `asdf which asvc` succeeds: asvc is installed for the selected Node.js
-  version and only the shim PATH is missing. For an immediate command, invoke
-  `asdf exec asvc <args>`; do not reinstall.
+- Bare asvc is missing and asdf is available, but `asdf which asvc` succeeds: asvc is installed
+  for the selected Node.js version and only the shim PATH is missing. For an immediate command,
+  invoke `asdf exec asvc <args>`; do not reinstall.
 - `asdf shimversions asvc` lists versions but `asdf which asvc` fails: asvc exists only under a
   different Node.js version. Install it under the currently selected version.
-- Neither asdf check finds asvc: install `@homeant/asvc` under the selected Node.js version.
+- asdf is absent: this is not an error. If another manager is in use, select/load that manager's
+  installed Node in a normal shell and check its global packages before deciding to install.
+- No Node manager/runtime is visible in the non-login shell and no stable entry exists: bootstrap
+  the entry once from a shell where the intended Node and asvc are available. Do not guess a
+manager or repeatedly install packages from the stripped shell.
 
-For asvc 0.3.6+, install a stable entry for future non-login shells:
+For nvm specifically, `nvm` is normally a shell function and is expected to be absent when its
+profile was not loaded. In a shell where nvm is already initialized, classify the state with:
 
 ```bash
-asdf exec asvc setup-entry
+nvm current
+command -v node
+command -v asvc || true
+npm ls -g --depth=0 @homeant/asvc
+```
+
+If `npm ls` and `asvc --version` succeed, the package is installed; run `asvc setup-entry` and do
+not reinstall it. Only run `npm install -g @homeant/asvc@latest` after the global-package check
+fails for the intentionally selected nvm Node. Do not blindly source a guessed nvm profile from
+an agent shell.
+
+For asvc 0.3.7+, install a manager-neutral stable entry for future non-login shells. Invoke it
+through whichever installation is currently reachable (bare command shown; `asdf exec asvc` is
+only an asdf-specific bootstrap fallback):
+
+```bash
+asvc setup-entry
 hash -r 2>/dev/null || true
 command -v asvc
 asvc --version
 ```
 
-`setup-entry` installs a small wrapper next to the detected asdf executable—typically
-`/opt/homebrew/bin/asvc` for Homebrew asdf. The wrapper uses the detected absolute asdf path and
-executes `asdf exec asvc`, so it hardcodes neither the user home nor a Node.js version. It refuses
-to overwrite an unrelated command unless explicitly given `--force`.
+`setup-entry` installs a small wrapper in the Homebrew prefix's bin when available, otherwise in
+`$XDG_BIN_HOME` or `~/.local/bin`. It pins the actual Node executable and asvc CLI module which ran
+the setup command; at invocation time it calls no version-manager command. Thus asdf, nvm, fnm,
+Volta, and system-Node installations use the same non-login entry mechanism. It refuses to
+overwrite an unrelated command unless explicitly given `--force`, and warns when the selected
+directory is not currently in PATH. Rerun it before/after removing the pinned Node version or
+moving the global asvc installation.
 
-If installation is actually required from a non-login shell, first expose the selected Node.js
+Record the absolute entry path printed by `setup-entry`. A loaded nvm/asdf shell may still resolve
+`command -v asvc` to its own global bin first, so that check alone does not verify the wrapper.
+Verify the printed entry itself in a stripped environment (replace the example path):
+
+```bash
+ASVC_STABLE=/absolute/path/printed/by/setup-entry
+env -i HOME="$HOME" PATH="$(dirname "$ASVC_STABLE"):/usr/bin:/bin" \
+  "$ASVC_STABLE" --version
+env -i HOME="$HOME" PATH="$(dirname "$ASVC_STABLE"):/usr/bin:/bin" \
+  "$ASVC_STABLE" list
+```
+
+If asdf diagnostics prove installation is actually required, first expose its selected Node.js
 bin directory so both npm and its `#!/usr/bin/env node` interpreter resolve reliably:
 
 ```bash
@@ -102,12 +154,13 @@ asdf reshim nodejs <current-version>
 (If you are working inside the agent-server-manager repo itself, build and link using the same
 selected-Node PATH technique.)
 
-### asdf and multiple Node.js versions
+### Service runtime selection and asdf
 
 asdf isolates globally installed npm packages by Node.js version. If projects using multiple
-Node.js versions need to invoke `asvc` directly, install the same `@homeant/asvc` version under
-each of those Node.js versions. These CLI installations still connect to one global asvc daemon;
-they do not create one daemon per Node.js version.
+Node.js versions invoke `asvc` through asdf shims, install the same package version under each.
+Once the manager-neutral stable entry is installed, this duplication is no longer required for
+the control CLI. All CLI installations connect to one global daemon; they do not create one
+daemon per Node.js version.
 
 Before using asvc in a project selected by `.tool-versions`, check the current coverage:
 
@@ -140,6 +193,12 @@ asvc start web -c "npm run dev" --cwd /absolute/path/to/web --port 3000 -d
 Do not add `asdf exec` to service definitions on 0.3.4+ unless there is a specific override.
 An explicit `--env PATH=...` intentionally takes precedence over asvc's automatic shim setup.
 
+This automatic project-runtime behavior is specifically an asdf adapter. Do not claim that cwd
+alone applies nvm `.nvmrc`, fnm, or other manager configuration. For those managers, register a
+command or `--env PATH=...` that explicitly selects the intended runtime until a corresponding
+service-runtime adapter exists. The stable control entry and service runtime selection are
+separate concerns.
+
 For asvc 0.3.3 or older, use an absolute asdf binary in the registered command as a temporary
 compatibility measure, then restart the service so the updated definition takes effect:
 
@@ -158,12 +217,22 @@ asvc daemon stop
 asvc start --all
 ```
 
-Finally verify the expected runtime and actual process executable:
+Finally verify the expected runtime and actual process executable. Determine the expected value
+through the project's actual manager in a shell where that manager is loaded, then inspect the
+service process independently:
 
 ```bash
+# asdf project:
 cd /absolute/path/to/web
 asdf exec node -p 'process.version + " " + process.execPath'
+
+# nvm project, in an nvm-initialized shell:
+nvm use
+node -p 'process.version + " " + process.execPath'
+
+# authoritative managed process check, regardless of manager:
 lsof -a -p <service-pid> -d txt
+ps -p <service-pid> -o command=
 ```
 
 A correct cwd, an open port, or HTTP 200 does not prove the runtime version.

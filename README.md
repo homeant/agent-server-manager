@@ -46,37 +46,47 @@ npm install -g @homeant/asvc
 在正常加载 npm 全局 bin/shims 的 shell 中，装完后 `asvc` / `asvc-daemon` 会在 PATH 上。
 daemon 会在首次执行任意 `asvc` 命令时**自动拉起**，无需手动启动。
 
-### asdf 与非登录 shell
+### Node 版本管理器与非登录 shell
 
-Codex/agent 的非登录 shell 可能不加载用户 profile，因此 `PATH` 中没有
-`~/.asdf/shims`。此时 `command -v asvc` 为空并不代表未安装。先检查：
+Codex/agent 的非登录 shell 可能不加载用户 profile，因此 `PATH` 中可能没有 asdf
+shims、nvm/fnm 所选 Node 的 bin，或其他管理器提供的全局 npm bin。此时
+`command -v asvc` 为空并不代表未安装，也不应直接重复安装。
 
-```bash
-command -v asvc || true
-asdf shimversions asvc
-asdf which asvc
-```
-
-如果 `asdf which asvc` 成功，直接使用 `asdf exec asvc <参数>` 即可，不要重复安装。
-从 asvc 0.3.6 起，可以一次性安装稳定入口：
+从 asvc 0.3.7 起，可在一个已经能运行 asvc 的 shell 中一次性安装稳定入口：
 
 ```bash
-asdf exec asvc setup-entry
+asvc setup-entry
 hash -r
 asvc --version
 ```
 
-入口默认安装到 `asdf` 可执行文件所在目录；Homebrew 安装的 asdf 通常会得到
-`/opt/homebrew/bin/asvc`。入口内部调用检测到的绝对路径 `asdf exec asvc`，不硬编码
-用户 home 或 Node 版本，因此在不加载 shell profile 时仍可用，并继续按当前 cwd 选择
-对应 Node 下安装的 asvc。
+首次调用可来自 asdf、nvm、fnm、Volta 或系统 Node；生成的入口不再调用任何版本管理器，
+而是固定使用执行 `setup-entry` 时真实运行的 Node 可执行文件和当前 asvc CLI。默认优先写入
+Homebrew prefix 的 `bin`，没有 Homebrew 时写入 `$XDG_BIN_HOME` 或 `~/.local/bin`；若该目录
+不在非登录 shell 的 PATH，命令会提示使用 `--bin-dir` 或配置 PATH。卸载被固定的 Node
+版本或移动全局 npm 安装位置前后，应在仍可运行 asvc 的 shell 中重新执行 `setup-entry`。
+
+如果当前使用 asdf 且裸命令不可见，可先确认是 shim PATH 问题，再通过 asdf 完成首次设置：
+
+```bash
+asdf shimversions asvc
+asdf which asvc
+asdf exec asvc setup-entry
+```
+
+如果客户没有 asdf，不会因此报错；通过其已有管理器选中已安装 asvc 的 Node 后直接运行
+`asvc setup-entry` 即可。对于完全不加载版本管理器且尚未设置稳定入口的 shell，需要先在
+正常交互 shell 中完成这一次设置，或显式提供当前 asvc 的路径。若怀疑入口已经生成但仍
+不在 PATH，应直接检查 `$XDG_BIN_HOME/asvc`、`~/.local/bin/asvc`、Homebrew prefix 的
+`bin/asvc`，而不是再次安装 npm 包。
 
 如果使用 asdf，`npm install -g` 的包按 Node 版本隔离：需要从多个 Node 版本的项目目录
-直接调用 `asvc` 时，应在各版本下分别安装相同版本的 `@homeant/asvc`，再执行
-`asdf reshim nodejs <版本>`。这些 CLI 仍连接同一个全局 daemon，不会各起一个 daemon。
+通过 asdf shim 直接调用 `asvc` 时，才需要在各版本下分别安装相同版本。安装稳定入口后，
+控制端不再要求每个 Node 版本各装一份。这些 CLI 仍连接同一个全局 daemon。
 不要通过切换到另一个项目目录来绕过 shim 错误；这只改变控制端解析，不能证明服务运行时。
 从 asvc 0.3.4 起，服务定义保持裸命令（如 `npm run dev`）即可，daemon 会按服务的
-`cwd` / `.tool-versions` 选择运行时。
+`cwd` / `.tool-versions` 选择 asdf 运行时。nvm 的 `.nvmrc` 等其他管理器配置目前不会被
+自动解析，需要在服务定义中显式提供对应运行时的命令或 PATH。
 
 ### Shell 补全（Tab 提示）
 
@@ -207,9 +217,10 @@ ln -sfn "$PWD/skill/asvc" ~/.claude/skills/asvc
 - IPC：unix domain socket + newline-delimited JSON（请求/响应 + 事件推送）。
 - 进程组：`spawn(..., { shell:true, detached:true })`，停止时 `kill(-pid)` 终止整组，
   先 `SIGTERM`，5s 未退再 `SIGKILL`。
-- asdf 运行时隔离：服务启动前把 `$ASDF_DATA_DIR/shims`（默认 `~/.asdf/shims`）放到
+- asdf 服务运行时适配：服务启动前把 `$ASDF_DATA_DIR/shims`（默认 `~/.asdf/shims`）放到
   继承 `PATH` 的最前面，让 shim 按服务自己的 `cwd` / `.tool-versions` 选择工具版本；
-  `--env PATH=...` 可显式覆盖这一行为。
+  `--env PATH=...` 可显式覆盖这一行为。此项不表示自动支持 nvm 的 `.nvmrc`、fnm 等
+  其他管理器的项目运行时选择。
 - 启动后 1s 稳定窗口：进程在窗口内退出即判失败，返回真实状态而非乐观 running。
 - TypeScript + `commander`，无其他运行时依赖。
 ```
