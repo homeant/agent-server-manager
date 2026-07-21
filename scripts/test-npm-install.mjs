@@ -102,5 +102,10 @@ try {
   assert.match(command(asvc, ["daemon", "stop"], env), /daemon 已停止/);
   console.log("packed npm install smoke test passed");
 } finally {
-  fs.rmSync(fixture, { recursive: true, force: true });
+  fs.rmSync(fixture, {
+    recursive: true,
+    force: true,
+    maxRetries: process.platform === "win32" ? 10 : 0,
+    retryDelay: 100,
+  });
 }

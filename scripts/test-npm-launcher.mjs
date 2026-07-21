@@ -49,5 +49,10 @@ try {
   console.log("npm launcher smoke test passed");
 } finally {
   spawnSync(binary, ["daemon", "stop"], { env, encoding: "utf8", timeout: 5_000 });
-  fs.rmSync(fixture, { recursive: true, force: true });
+  fs.rmSync(fixture, {
+    recursive: true,
+    force: true,
+    maxRetries: process.platform === "win32" ? 10 : 0,
+    retryDelay: 100,
+  });
 }
