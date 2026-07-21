@@ -1,4 +1,4 @@
-name: Publish to npm
+name: Publish release
 
 on:
   push:
@@ -7,11 +7,94 @@ on:
 
 permissions:
   contents: read
-  id-token: write # npm provenance 需要 OIDC
 
 jobs:
+  build:
+    name: Build ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: darwin-arm64
+            runner: macos-14
+            rust_target: ""
+          - platform: darwin-x64
+            runner: macos-15-intel
+            rust_target: ""
+          - platform: linux-arm64
+            runner: ubuntu-24.04-arm
+            rust_target: aarch64-unknown-linux-musl
+          - platform: linux-x64
+            runner: ubuntu-24.04
+            rust_target: x86_64-unknown-linux-musl
+          - platform: win32-x64
+            runner: windows-2025
+            rust_target: ""
+    runs-on: ${{ matrix.runner }}
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+          targets: ${{ matrix.rust_target }}
+
+      - name: Install musl linker
+        if: startsWith(matrix.platform, 'linux-')
+        shell: bash
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - run: npm ci --ignore-scripts --omit=optional
+      - run: node scripts/check-release-version.mjs
+      - run: cargo test --locked
+      - run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: Build native executable
+        shell: bash
+        run: |
+          if [[ -n "${{ matrix.rust_target }}" ]]; then
+            cargo build --release --locked --target "${{ matrix.rust_target }}"
+          else
+            cargo build --release --locked
+          fi
+
+      - name: Package native executable
+        shell: bash
+        env:
+          ASVC_BUILD_TARGET: ${{ matrix.rust_target }}
+        run: node scripts/package-platform.mjs
+
+      - name: Smoke-test npm launcher and installed package
+        run: npm run test:native
+
+      - name: Pack native npm package
+        shell: bash
+        run: npm pack "./npm/asvc-${{ matrix.platform }}" --pack-destination release
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ matrix.platform }}
+          if-no-files-found: error
+          path: |
+            npm/asvc-${{ matrix.platform }}/
+            release/asvc-v*-${{ matrix.platform }}.*
+            release/homeant-asvc-${{ matrix.platform }}-*.tgz
+            release/SHA256SUMS-${{ matrix.platform }}
+
   publish:
-    runs-on: ubuntu-latest
+    name: Publish npm packages and GitHub Release
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      id-token: write
     steps:
       - uses: actions/checkout@v5
 
@@ -19,19 +102,58 @@ jobs:
         with:
           node-version: 20
           registry-url: https://registry.npmjs.org
+          cache: npm
 
-      - name: 校验 tag 与 package.json 版本一致
+      - run: npm ci --ignore-scripts --omit=optional
+
+      - uses: actions/download-artifact@v5
+        with:
+          pattern: build-*
+          merge-multiple: true
+
+      - name: Validate assembled release
+        env:
+          ASVC_REQUIRE_ALL_BINARIES: "1"
         run: |
-          PKG_VERSION=$(node -p "require('./package.json').version")
-          TAG_VERSION="${GITHUB_REF_NAME#v}"
-          if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
-            echo "tag v$TAG_VERSION 与 package.json 的 $PKG_VERSION 不一致" >&2
-            exit 1
-          fi
+          chmod 755 npm/asvc-darwin-arm64/bin/asvc npm/asvc-darwin-x64/bin/asvc
+          chmod 755 npm/asvc-linux-arm64/bin/asvc npm/asvc-linux-x64/bin/asvc
+          node scripts/check-release-version.mjs
+          node scripts/verify-npm-packages.mjs
+          cat release/SHA256SUMS-* | sort > release/SHA256SUMS
 
-      - run: npm ci
-
-      # prepublishOnly 会先 clean + build
-      - run: npm publish --provenance
+      - name: Publish native npm packages
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          for package in release/homeant-asvc-*.tgz; do
+            name=$(tar -xOf "$package" package/package.json | node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).name")
+            if npm view "$name@${GITHUB_REF_NAME#v}" version >/dev/null 2>&1; then
+              echo "$name@${GITHUB_REF_NAME#v} already exists; skipping"
+            else
+              npm publish "$package" --provenance
+            fi
+          done
+
+      - name: Publish npm launcher package
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if npm view "@homeant/asvc@${GITHUB_REF_NAME#v}" version >/dev/null 2>&1; then
+            echo "@homeant/asvc@${GITHUB_REF_NAME#v} already exists; skipping"
+          else
+            npm publish --provenance
+          fi
+
+      - name: Create GitHub Release with GitHub CLI
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          assets=(release/asvc-v*.tar.gz release/asvc-v*.zip release/SHA256SUMS)
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "${assets[@]}" \
+              --verify-tag \
+              --generate-notes \
+              --title "asvc $GITHUB_REF_NAME"
+          fi

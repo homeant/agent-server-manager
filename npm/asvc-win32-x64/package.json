@@ -1,0 +1,12 @@
+{
+  "name": "@homeant/asvc-win32-x64",
+  "version": "0.4.0",
+  "description": "Native Windows x64 binary for @homeant/asvc",
+  "license": "MIT",
+  "author": "homeant",
+  "repository": { "type": "git", "url": "git+https://github.com/homeant/agent-server-manager.git" },
+  "os": ["win32"],
+  "cpu": ["x64"],
+  "files": ["bin/asvc.exe"],
+  "publishConfig": { "registry": "https://registry.npmjs.org", "access": "public" }
+}

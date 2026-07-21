@@ -1,6 +1,6 @@
 {
   "name": "@homeant/asvc",
-  "version": "0.3.7",
+  "version": "0.4.0",
   "description": "统一管理本地开发服务的守护进程 + CLI，让人和 agent 通过同一套 asvc 命令启动/重启/关闭服务，避免端口冲突与重复启动。",
   "type": "module",
   "license": "MIT",
@@ -18,20 +18,21 @@
     "claude-code"
   ],
   "bin": {
-    "asvc": "dist/cli.js",
-    "asvc-daemon": "dist/daemon/index.js"
+    "asvc": "npm/bin/asvc.js"
   },
   "files": [
-    "dist",
+    "npm/bin/asvc.js",
     "skill"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "test": "npm run build && node --test test/*.test.mjs",
-    "dev": "tsc -w -p tsconfig.json",
-    "start": "node dist/cli.js",
-    "clean": "rm -rf dist",
-    "prepublishOnly": "npm run clean && npm run build"
+    "build": "cargo build --release",
+    "package:native": "node scripts/package-platform.mjs",
+    "build:mac": "sh scripts/build-macos.sh",
+    "build:standalone:mac": "npm run build:mac",
+    "test": "cargo test --locked",
+    "test:native": "node scripts/test-npm-launcher.mjs && node scripts/test-npm-install.mjs",
+    "test:standalone:mac": "npm run build:mac && npm run test:native",
+    "prepack": "node scripts/verify-npm-packages.mjs"
   },
   "publishConfig": {
     "registry": "https://registry.npmjs.org",
@@ -40,11 +41,11 @@
   "engines": {
     "node": ">=20"
   },
-  "dependencies": {
-    "commander": "^12.1.0"
-  },
-  "devDependencies": {
-    "@types/node": "^22.0.0",
-    "typescript": "^5.6.0"
+  "optionalDependencies": {
+    "@homeant/asvc-darwin-arm64": "0.4.0",
+    "@homeant/asvc-darwin-x64": "0.4.0",
+    "@homeant/asvc-linux-arm64": "0.4.0",
+    "@homeant/asvc-linux-x64": "0.4.0",
+    "@homeant/asvc-win32-x64": "0.4.0"
   }
 }

@@ -1,0 +1,22 @@
+[package]
+name = "asvc"
+version = "0.4.0"
+edition = "2024"
+license = "MIT"
+description = "A shared local development service manager for humans and agents"
+repository = "https://github.com/homeant/agent-server-manager"
+
+[dependencies]
+anyhow = "1.0"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+clap = { version = "4.5", features = ["derive"] }
+fs2 = "0.4"
+libc = "0.2"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.48", features = ["full"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

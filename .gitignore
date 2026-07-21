@@ -1,4 +1,9 @@
 node_modules/
 dist/
+build/
+release/
+target/
+npm/asvc-*/bin/asvc
+npm/asvc-*/bin/asvc.exe
 *.log
 .DS_Store

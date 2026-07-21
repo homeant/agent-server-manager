@@ -39,54 +39,75 @@ agent 在另一头 `asvc restart web`，daemon 只是把底层进程换了一个
 
 ## 安装
 
+### Homebrew（macOS，推荐）
+
+仓库本身作为自定义 tap 使用，不需要发布者注册额外的 Homebrew 账号：
+
+```bash
+brew tap homeant/asvc https://github.com/homeant/agent-server-manager
+brew install homeant/asvc/asvc
+```
+
+升级使用 `brew upgrade homeant/asvc/asvc`。公式会按 Apple Silicon 或 Intel Mac 下载对应的
+GitHub Release 原生二进制，并校验 SHA-256。
+
+### GitHub Release 原生文件
+
+asvc 核心使用 Rust，CLI 和 daemon 是同一个原生可执行文件，不依赖客户机器上的 Node、asdf、
+nvm、fnm 或 Volta。每个 tag 发布以下产物：
+
+| 系统 | 架构 | Release 资产 |
+| --- | --- | --- |
+| macOS 11+ | arm64 | `asvc-v<version>-darwin-arm64.tar.gz` |
+| macOS 11+ | x64 | `asvc-v<version>-darwin-x64.tar.gz` |
+| Linux | arm64 | `asvc-v<version>-linux-arm64.tar.gz` |
+| Linux | x64 | `asvc-v<version>-linux-x64.tar.gz` |
+| Windows | x64 | `asvc-v<version>-win32-x64.zip` |
+
+Linux 产物使用 musl 静态链接，以覆盖常见 glibc 和 musl 发行版。下载后用同一 Release 中的
+`SHA256SUMS` 校验，再把 `asvc`（Windows 为 `asvc.exe`）放进稳定的 PATH 目录。
+
+本机从源码构建当前平台：
+
+```bash
+cargo test --locked
+cargo build --release --locked
+node scripts/package-platform.mjs
+```
+
+### npm 安装
+
 ```bash
 npm install -g @homeant/asvc
 ```
 
-在正常加载 npm 全局 bin/shims 的 shell 中，装完后 `asvc` / `asvc-daemon` 会在 PATH 上。
-daemon 会在首次执行任意 `asvc` 命令时**自动拉起**，无需手动启动。
+npm 主包只包含一个很小的启动器，并通过 optional dependency 选择当前系统对应的原生包：
+macOS arm64/x64、Linux arm64/x64 或 Windows x64。启动器立即执行 Rust 二进制；CLI 核心、
+daemon 和服务监督都不在 Node 中运行。daemon 会在首次执行需要它的 `asvc` 命令时自动拉起。
 
-### Node 版本管理器与非登录 shell
+npm 的全局命令遵循标准 prefix 规则：包安装到当前 Node 的
+`{prefix}/lib/node_modules`，命令链接到 `{prefix}/bin`。因此使用 npm 渠道时，asdf/nvm
+管理的不同 Node prefix 仍可能有各自的全局安装；这是 npm 安装入口的属性，不是 Rust
+daemon 的运行时依赖。需要完全绕开 Node manager 时，直接安装上面的原生文件。
 
-Codex/agent 的非登录 shell 可能不加载用户 profile，因此 `PATH` 中可能没有 asdf
-shims、nvm/fnm 所选 Node 的 bin，或其他管理器提供的全局 npm bin。此时
-`command -v asvc` 为空并不代表未安装，也不应直接重复安装。
+### 非登录 shell
 
-从 asvc 0.3.7 起，可在一个已经能运行 asvc 的 shell 中一次性安装稳定入口：
+Codex/agent 的非登录 shell 可能不加载用户 profile，因此 `PATH` 里可能没有 npm 全局 bin
+或项目运行时。把原生 `asvc` 安装到非登录 shell 已包含的稳定目录，即可让控制命令不依赖
+任何 Node manager。
 
-```bash
-asvc setup-entry
-hash -r
-asvc --version
-```
+服务运行环境采用通用规则，不识别 asdf、nvm、fnm 或项目版本文件：
 
-首次调用可来自 asdf、nvm、fnm、Volta 或系统 Node；生成的入口不再调用任何版本管理器，
-而是固定使用执行 `setup-entry` 时真实运行的 Node 可执行文件和当前 asvc CLI。默认优先写入
-Homebrew prefix 的 `bin`，没有 Homebrew 时写入 `$XDG_BIN_HOME` 或 `~/.local/bin`；若该目录
-不在非登录 shell 的 PATH，命令会提示使用 `--bin-dir` 或配置 PATH。卸载被固定的 Node
-版本或移动全局 npm 安装位置前后，应在仍可运行 asvc 的 shell 中重新执行 `setup-entry`。
+- `start <name> -c ...` 注册或更新服务时，保存调用者当前的 `PATH`。
+- 后续 `restart` 和 daemon 重启后的 `start` 继续使用这个 PATH。
+- `--env PATH=...` 显式值优先。
+- Codex 不得给 shell 传 `-i`，包括首次注册。交互 shell 会加载不可控的 prompt、插件、
+  别名和启动脚本，不适合作为自动化环境。
 
-如果当前使用 asdf 且裸命令不可见，可先确认是 shim PATH 问题，再通过 asdf 完成首次设置：
-
-```bash
-asdf shimversions asvc
-asdf which asvc
-asdf exec asvc setup-entry
-```
-
-如果客户没有 asdf，不会因此报错；通过其已有管理器选中已安装 asvc 的 Node 后直接运行
-`asvc setup-entry` 即可。对于完全不加载版本管理器且尚未设置稳定入口的 shell，需要先在
-正常交互 shell 中完成这一次设置，或显式提供当前 asvc 的路径。若怀疑入口已经生成但仍
-不在 PATH，应直接检查 `$XDG_BIN_HOME/asvc`、`~/.local/bin/asvc`、Homebrew prefix 的
-`bin/asvc`，而不是再次安装 npm 包。
-
-如果使用 asdf，`npm install -g` 的包按 Node 版本隔离：需要从多个 Node 版本的项目目录
-通过 asdf shim 直接调用 `asvc` 时，才需要在各版本下分别安装相同版本。安装稳定入口后，
-控制端不再要求每个 Node 版本各装一份。这些 CLI 仍连接同一个全局 daemon。
-不要通过切换到另一个项目目录来绕过 shim 错误；这只改变控制端解析，不能证明服务运行时。
-从 asvc 0.3.4 起，服务定义保持裸命令（如 `npm run dev`）即可，daemon 会按服务的
-`cwd` / `.tool-versions` 选择 asdf 运行时。nvm 的 `.nvmrc` 等其他管理器配置目前不会被
-自动解析，需要在服务定义中显式提供对应运行时的命令或 PATH。
+因此 `cwd` 只负责工作目录，不会自行解释 `.tool-versions` 或 `.nvmrc`；运行时选择由注册时
+的用户环境或显式服务命令负责。非登录 PATH 不正确时，应使用确认过的绝对运行时、
+`--env PATH=...`、已知的 manager 非交互命令，或者让用户在自己的终端完成首次注册；不要
+用 `-i` 隐式加载整套用户配置。
 
 ### Shell 补全（Tab 提示）
 
@@ -100,11 +121,12 @@ eval "$(asvc completion bash)"
 补全覆盖子命令、各命令的 flag，以及**服务名**——`asvc restart <TAB>` 会实时列出
 daemon 里已注册的服务（daemon 未运行时安静地不补全，不会触发自动拉起）。
 
-从源码开发时改用本地构建：
+从源码开发时直接构建 Rust 二进制：
 
 ```bash
-npm install && npm run build
-npm link        # 把本地构建的 asvc 装到全局 PATH
+cargo test --locked
+cargo build --release --locked
+./target/release/asvc --version
 ```
 
 ## 命令一览（`asvc`）
@@ -132,7 +154,6 @@ asvc rm --all --yes       # 停止并删除所有注册（日志保留）
 
 asvc daemon status        # 看 daemon 是否运行
 asvc daemon stop          # 停 daemon（会先关闭所有服务）
-asvc setup-entry          # 安装非登录 shell 可用的稳定入口
 ```
 
 `start` 参数：`-c/--cmd`（命令，经 shell 执行）、`-w/--cwd`（默认当前目录）、
@@ -207,20 +228,19 @@ ln -sfn "$PWD/skill/asvc" ~/.claude/skills/asvc
 ## 数据与配置
 
 - 全局单实例，家目录默认 `~/.asvc`（可用 `ASVC_HOME` 覆盖）。
-- socket：`$ASVC_HOME/daemon.sock`（可用 `ASVC_SOCKET` 覆盖）。
+- IPC：macOS/Linux 使用 `$ASVC_HOME/daemon.sock`（可用 `ASVC_SOCKET` 覆盖）；Windows
+  使用仅监听 loopback 的动态 TCP 端口，并把端口写入 `$ASVC_HOME/daemon.port`。
 - 每个服务日志落盘 `$ASVC_HOME/logs/<name>.log`，内存保留最近 2000 行供快速查询。
 - 服务定义**动态注册**，无需手写配置文件；注册表持久化在 `$ASVC_HOME/registry.json`，
   daemon 重启后自动恢复定义（不自动拉起进程，`asvc start <name>` 即可再启动，无需重新带 `-c`）。
 
 ## 实现要点
 
-- IPC：unix domain socket + newline-delimited JSON（请求/响应 + 事件推送）。
-- 进程组：`spawn(..., { shell:true, detached:true })`，停止时 `kill(-pid)` 终止整组，
-  先 `SIGTERM`，5s 未退再 `SIGKILL`。
-- asdf 服务运行时适配：服务启动前把 `$ASDF_DATA_DIR/shims`（默认 `~/.asdf/shims`）放到
-  继承 `PATH` 的最前面，让 shim 按服务自己的 `cwd` / `.tool-versions` 选择工具版本；
-  `--env PATH=...` 可显式覆盖这一行为。此项不表示自动支持 nvm 的 `.nvmrc`、fnm 等
-  其他管理器的项目运行时选择。
+- IPC：Unix domain socket / Windows loopback TCP + newline-delimited JSON（请求/响应 + 事件推送）。
+- 进程树：macOS/Linux 使用独立进程组并先 `SIGTERM`、超时再 `SIGKILL`；Windows 使用
+  `taskkill /T`，超时后增加 `/F`。
+- 服务环境：注册定义时保存调用者 PATH，daemon 继承其余通用环境，服务 `--env` 最后覆盖；
+  核心不包含任何 Node 版本管理器适配。
 - 启动后 1s 稳定窗口：进程在窗口内退出即判失败，返回真实状态而非乐观 running。
-- TypeScript + `commander`，无其他运行时依赖。
+- Rust + Tokio；macOS、Linux、Windows 每个平台产物都是单个原生可执行文件。
 ```
