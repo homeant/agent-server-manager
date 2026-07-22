@@ -167,6 +167,9 @@ jobs:
     needs: publish
     runs-on: ubuntu-24.04
     steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
       - name: Check out Homebrew tap
         uses: actions/checkout@v6
         with:
@@ -175,10 +178,9 @@ jobs:
           ssh-key: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
 
       - name: Render formula from this release
-        working-directory: homebrew-tap
         env:
           ASVC_TAG: ${{ github.ref_name }}
-        run: ./scripts/update-asvc-formula.sh
+        run: ./scripts/update-homebrew-formula.sh homebrew-tap
 
       - name: Validate and publish formula
         working-directory: homebrew-tap
