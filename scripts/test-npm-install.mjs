@@ -47,12 +47,12 @@ function command(executable, args, env) {
 try {
   const platformPack = JSON.parse(
     npm(
-      ["pack", "--json", "--pack-destination", packDir],
+      ["pack", "--json", "--silent", "--pack-destination", packDir],
       path.join(root, "npm", `asvc-${platform}`)
     )
   )[0].filename;
   const rootPack = JSON.parse(
-    npm(["pack", "--json", "--pack-destination", packDir], root)
+    npm(["pack", "--json", "--silent", "--pack-destination", packDir], root)
   )[0].filename;
   npm([
     "install",
