@@ -48,8 +48,8 @@ brew install homeant/tap/asvc
 ```
 
 升级使用 `brew upgrade homeant/tap/asvc`。公式会按 Apple Silicon 或 Intel Mac 下载对应的
-GitHub Release 原生二进制，并校验 SHA-256。Formula 由
-[`homeant/homebrew-tap`](https://github.com/homeant/homebrew-tap) 自动维护。
+GitHub Release 原生二进制，并校验 SHA-256。手动推送 `v*` tag 后，发布工作流会在 Release
+成功创建后同步更新 [`homeant/homebrew-tap`](https://github.com/homeant/homebrew-tap)。
 
 ### GitHub Release 原生文件
 

@@ -161,3 +161,37 @@ jobs:
               --generate-notes \
               --title "asvc $GITHUB_REF_NAME"
           fi
+
+  update-homebrew:
+    name: Update Homebrew tap
+    needs: publish
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out Homebrew tap
+        uses: actions/checkout@v6
+        with:
+          repository: homeant/homebrew-tap
+          path: homebrew-tap
+          ssh-key: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+
+      - name: Render formula from this release
+        working-directory: homebrew-tap
+        env:
+          ASVC_TAG: ${{ github.ref_name }}
+        run: ./scripts/update-asvc-formula.sh
+
+      - name: Validate and publish formula
+        working-directory: homebrew-tap
+        run: |
+          ruby -c Formula/asvc.rb
+          if git diff --quiet -- Formula/asvc.rb; then
+            echo "Formula is already current"
+            exit 0
+          fi
+
+          version=${GITHUB_REF_NAME#v}
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/asvc.rb
+          git commit -m "asvc ${version}"
+          git push
