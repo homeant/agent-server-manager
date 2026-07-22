@@ -41,15 +41,15 @@ agent 在另一头 `asvc restart web`，daemon 只是把底层进程换了一个
 
 ### Homebrew（macOS，推荐）
 
-仓库本身作为自定义 tap 使用，不需要发布者注册额外的 Homebrew 账号：
+通过 Homeant 的标准 GitHub tap 安装；直接安装会自动添加并仅信任这个 Formula：
 
 ```bash
-brew tap homeant/asvc https://github.com/homeant/agent-server-manager
-brew install homeant/asvc/asvc
+brew install homeant/tap/asvc
 ```
 
-升级使用 `brew upgrade homeant/asvc/asvc`。公式会按 Apple Silicon 或 Intel Mac 下载对应的
-GitHub Release 原生二进制，并校验 SHA-256。
+升级使用 `brew upgrade homeant/tap/asvc`。公式会按 Apple Silicon 或 Intel Mac 下载对应的
+GitHub Release 原生二进制，并校验 SHA-256。Formula 由
+[`homeant/homebrew-tap`](https://github.com/homeant/homebrew-tap) 自动维护。
 
 ### GitHub Release 原生文件
 

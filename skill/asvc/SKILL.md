@@ -34,8 +34,7 @@ Supported native targets are macOS arm64/x64, Linux arm64/x64, and Windows x64. 
 Homebrew is the preferred installation channel:
 
 ```bash
-brew tap homeant/asvc https://github.com/homeant/agent-server-manager
-brew install homeant/asvc/asvc
+brew install homeant/tap/asvc
 ```
 
 Do not reinstall merely because `command -v asvc` is empty. First check stable native locations:
