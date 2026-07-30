@@ -3,9 +3,10 @@ name: asvc
 description: >-
   Manage local development servers through the `asvc` CLI so the human and the agent
   share one daemon instead of spawning duplicate processes. Use whenever starting,
-  running, restarting, stopping, or reading logs for a long-running dev process such
-  as npm run dev, vite, next dev, go run, flask, uvicorn, or a watch task. Route server
-  processes through asvc instead of direct foreground commands, &, or nohup.
+  running, inspecting, restarting, stopping, reading, or following logs for a
+  long-running dev process such as npm run dev, vite, next dev, go run, flask, uvicorn,
+  or a watch task. Route server processes through asvc instead of direct foreground
+  commands, &, or nohup.
 ---
 
 # Dev Server Manager (`asvc`)
@@ -152,8 +153,10 @@ asvc start api -c "go run ." --cwd /path/api --env KEY=VAL -d
 asvc start web -d
 
 asvc list
+asvc info web             # `show` is an alias
 asvc logs web
 asvc logs web -n 500
+asvc logs web -f
 asvc restart web
 asvc stop web
 asvc rm web
@@ -166,8 +169,27 @@ asvc daemon status
 asvc daemon stop
 ```
 
-`start` flags: `-c/--cmd`, `-w/--cwd`, `-p/--port`, repeatable `-e/--env KEY=VAL`,
-`--autorestart`, and `-d/--detach`.
+Current command shapes:
+
+- `start [NAME]`: accept `-c/--cmd`, `-w/--cwd`, `-p/--port`, repeatable
+  `-e/--env KEY=VAL`, `--autorestart`, `-d/--detach`, and `-a/--all`.
+- `stop [NAME]`: accept `-a/--all`.
+- `restart <NAME>`: require exactly one service name; no bulk form exists.
+- `logs <NAME>`: accept `-n/--lines <LINES>` (default 200) and `-f/--follow`.
+- `list`: show a compact overview of all services.
+- `info <NAME>` (alias `show`): show one service's complete status, resource usage, launch
+  configuration, and environment overrides.
+- `rm [NAME]`: accept `-a/--all` and `-y/--yes`.
+- `daemon status`: check the daemon without auto-starting it.
+- `daemon stop`: stop the daemon and the services it manages. There is no `daemon start`
+  subcommand; a service operation starts the daemon when needed.
+
+Use plain `logs` or a bounded `-n` value for diagnosis. `logs -f` continuously follows output;
+use it only when live streaming is requested and the execution environment can safely manage a
+long-running attached command.
+
+`info` prints registered environment overrides, which may contain secrets. Inspect them locally
+when needed, but redact sensitive values before quoting or forwarding the output.
 
 Bulk operations continue after individual failures and return non-zero if any item fails.
 `rm --all` only previews; `rm --all --yes` performs the destructive operation. Historical logs
@@ -185,6 +207,7 @@ Do not assume success after a non-zero result. For later diagnosis use:
 
 ```bash
 asvc list
+asvc info <name>
 asvc logs <name> -n 200
 ```
 

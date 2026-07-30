@@ -3,6 +3,7 @@ mod client;
 mod daemon;
 mod model;
 mod paths;
+mod skill;
 mod supervisor;
 
 use std::process::ExitCode;

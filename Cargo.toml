@@ -1,6 +1,6 @@
 [package]
 name = "asvc"
-version = "0.4.2"
+version = "0.4.3"
 edition = "2024"
 license = "MIT"
 description = "A shared local development service manager for humans and agents"
@@ -14,13 +14,15 @@ fs2 = "0.4"
 libc = "0.2"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+sha2 = "0.10"
 tokio = { version = "1.48", features = ["full"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [
-  "Win32_Foundation",
-  "Win32_Security",
-  "Win32_System_Threading",
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Threading",
 ] }
 
 [profile.release]

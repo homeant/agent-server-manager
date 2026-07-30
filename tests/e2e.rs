@@ -7,6 +7,8 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use sha2::{Digest, Sha256};
+
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
@@ -223,8 +225,155 @@ fn registration_captures_the_calling_users_path_for_later_restarts() {
     );
 }
 
+#[test]
+fn installs_syncs_and_uninstalls_managed_agent_skills() {
+    let fixture = Fixture::new();
+    let bundled = include_str!("../skill/asvc/SKILL.md");
+    let codex_dir = fixture.home.join(".agents/skills/asvc");
+    let claude_dir = fixture.home.join(".claude/skills/asvc");
+    let managed_dir = fixture.asvc_home.join("skills/asvc");
+    let manifest_path = managed_dir.join("install.json");
+
+    assert!(
+        fixture
+            .stdout(&["skill", "status"])
+            .contains("托管状态: 未安装")
+    );
+    let installed = fixture.stdout(&[
+        "skill", "install", "--target", "codex", "--target", "claude",
+    ]);
+    assert!(installed.contains("Codex skill 已安装"));
+    assert!(installed.contains("Claude Code skill 已安装"));
+    assert_eq!(
+        fs::read_to_string(codex_dir.join("SKILL.md")).unwrap(),
+        bundled
+    );
+    assert_eq!(
+        fs::read_to_string(claude_dir.join("SKILL.md")).unwrap(),
+        bundled
+    );
+    assert_skill_install_type(&codex_dir, &managed_dir);
+    assert_skill_install_type(&claude_dir, &managed_dir);
+
+    let status = fixture.stdout(&["skill", "status"]);
+    assert!(status.contains(&format!("内嵌 skill 版本: {}", env!("CARGO_PKG_VERSION"))));
+    assert!(status.contains("Codex: 最新"));
+    assert!(status.contains("Claude Code: 最新"));
+
+    let confirmation_required = fixture.run_unchecked(&["skill", "uninstall", "--target", "codex"]);
+    assert!(!confirmation_required.status.success());
+    assert!(String::from_utf8_lossy(&confirmation_required.stderr).contains("--yes"));
+    assert!(path_lexists(&codex_dir));
+
+    // Simulate a previously managed skill version. A normal finite command
+    // should update it from the skill embedded in the new CLI.
+    let old_skill = "---\nname: asvc\ndescription: old managed copy\n---\nold\n";
+    fs::write(managed_dir.join("SKILL.md"), old_skill).unwrap();
+    #[cfg(windows)]
+    {
+        fs::write(codex_dir.join("SKILL.md"), old_skill).unwrap();
+        fs::write(claude_dir.join("SKILL.md"), old_skill).unwrap();
+    }
+    let old_sha = format!("{:x}", Sha256::digest(old_skill.as_bytes()));
+    let mut manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+    manifest["bundledSha256"] = old_sha.clone().into();
+    for target in manifest["targets"].as_array_mut().unwrap() {
+        target["installedSha256"] = old_sha.clone().into();
+    }
+    fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&manifest).unwrap(),
+    )
+    .unwrap();
+
+    let synced = fixture.run(&["daemon", "status"]);
+    assert!(String::from_utf8_lossy(&synced.stderr).contains("skill 已随 asvc 自动同步"));
+    assert_eq!(
+        fs::read_to_string(codex_dir.join("SKILL.md")).unwrap(),
+        bundled
+    );
+    assert_eq!(
+        fs::read_to_string(claude_dir.join("SKILL.md")).unwrap(),
+        bundled
+    );
+
+    // User edits are never overwritten or removed.
+    fs::write(codex_dir.join("SKILL.md"), "user-owned edit\n").unwrap();
+    let skipped = fixture.run(&["daemon", "status"]);
+    assert!(String::from_utf8_lossy(&skipped.stderr).contains("已跳过 skill 自动同步"));
+    assert_eq!(
+        fs::read_to_string(codex_dir.join("SKILL.md")).unwrap(),
+        "user-owned edit\n"
+    );
+    let refused = fixture.run_unchecked(&["skill", "install", "--target", "codex"]);
+    assert!(!refused.status.success());
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("--yes"));
+    assert_eq!(
+        fs::read_to_string(codex_dir.join("SKILL.md")).unwrap(),
+        "user-owned edit\n"
+    );
+    assert!(
+        fixture
+            .stdout(&["skill", "install", "--target", "codex", "--yes",])
+            .contains("Codex skill 已安装")
+    );
+    assert_eq!(
+        fs::read_to_string(codex_dir.join("SKILL.md")).unwrap(),
+        bundled
+    );
+
+    let removed = fixture.stdout(&[
+        "skill",
+        "uninstall",
+        "--target",
+        "codex",
+        "--target",
+        "claude",
+        "--yes",
+    ]);
+    assert!(removed.contains("Codex skill 已卸载"));
+    assert!(removed.contains("Claude Code skill 已卸载"));
+    assert!(!path_lexists(&codex_dir));
+    assert!(!path_lexists(&claude_dir));
+    assert!(!manifest_path.exists());
+}
+
+#[test]
+fn refuses_to_replace_an_unmanaged_skill() {
+    let fixture = Fixture::new();
+    let skill_file = fixture.home.join(".agents/skills/asvc/SKILL.md");
+    fs::create_dir_all(skill_file.parent().unwrap()).unwrap();
+    fs::write(&skill_file, "third-party skill\n").unwrap();
+
+    let output = fixture.run_unchecked(&["skill", "install"]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("不归 asvc 托管"));
+    assert_eq!(
+        fs::read_to_string(&skill_file).unwrap(),
+        "third-party skill\n"
+    );
+    assert!(!fixture.asvc_home.join("skills/asvc/install.json").exists());
+}
+
 fn configure_command(command: &mut Command, home: &Path, asvc_home: &Path, path: &str) {
     command.env_clear().envs(test_env(home, asvc_home, path));
+}
+
+#[cfg(unix)]
+fn assert_skill_install_type(path: &Path, managed_dir: &Path) {
+    assert!(fs::symlink_metadata(path).unwrap().file_type().is_symlink());
+    assert_eq!(fs::read_link(path).unwrap(), managed_dir);
+}
+
+#[cfg(windows)]
+fn assert_skill_install_type(path: &Path, _managed_dir: &Path) {
+    assert!(fs::symlink_metadata(path).unwrap().is_dir());
+    assert!(!fs::symlink_metadata(path).unwrap().file_type().is_symlink());
+}
+
+fn path_lexists(path: &Path) -> bool {
+    fs::symlink_metadata(path).is_ok()
 }
 
 #[cfg(unix)]

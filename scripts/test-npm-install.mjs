@@ -87,6 +87,19 @@ try {
   const version = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version;
   assert.equal(command(asvc, ["--version"], env).trim(), version);
   assert.match(command(asvc, ["daemon", "status"], env), /daemon 未运行/);
+  assert.match(command(asvc, ["skill", "status"], env), /托管状态: 未安装/);
+  assert.match(command(asvc, ["skill", "install"], env), /Codex skill 已安装/);
+  const installedSkillDir = path.join(home, ".agents", "skills", "asvc");
+  assert.match(fs.readFileSync(path.join(installedSkillDir, "SKILL.md"), "utf8"), /name: asvc/);
+  assert.equal(
+    fs.lstatSync(installedSkillDir).isSymbolicLink(),
+    process.platform !== "win32",
+    "Unix should link the managed skill; Windows should copy it"
+  );
+  assert.match(
+    command(asvc, ["skill", "uninstall", "--yes"], env),
+    /Codex skill 已卸载/
+  );
   assert.match(command(asvc, ["list"], env), /暂无服务/);
 
   const daemonPid = fs.readFileSync(path.join(asvcHome, "daemon.pid"), "utf8").trim();

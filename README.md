@@ -155,6 +155,10 @@ asvc rm --all --yes       # 停止并删除所有注册（日志保留）
 
 asvc daemon status        # 看 daemon 是否运行
 asvc daemon stop          # 停 daemon（会先关闭所有服务）
+
+asvc skill install                         # 安装当前版本内嵌的 skill 到 Codex
+asvc skill install --target claude         # 安装到 Claude Code
+asvc skill status                          # 查看内嵌/托管版本和同步状态
 ```
 
 `start` 参数：`-c/--cmd`（命令，经 shell 执行）、`-w/--cwd`（默认当前目录）、
@@ -191,23 +195,30 @@ daemon 会在一次批量请求开始时固定服务名单，最多同时处理 
 只要进程因此启动失败，走 Bash 的 agent 都能直接从**非零退出码 + 输出**判定失败和原因，
 而不是拿到一个乐观的 “running” 再去翻日志。`asvc start`（前台）同样：启动即失败会打印提示并以非零码退出。
 
-## 让 agent 用起来（Claude Code Skill）
+## 让 agent 用起来（Codex / Claude Code Skill）
 
-npm 包内自带一个 Claude Code skill：[`skill/asvc/SKILL.md`](skill/asvc/SKILL.md)。
-它教 agent 在该启动/重启/看日志时改用 `asvc`，并强调后台启动必须带 `-d`、按退出码判成败。
+npm 包和原生二进制都内嵌同版本的 [`skill/asvc/SKILL.md`](skill/asvc/SKILL.md)。
+它教 agent 在启动、查询、重启和查看日志时使用 `asvc`，并强调后台启动必须带 `-d`、
+按退出码判断成败。
 
-安装（软链到全局 skills 目录）：
-
-```bash
-npm install -g @homeant/asvc
-ln -sfn "$(npm root -g)/@homeant/asvc/skill/asvc" ~/.claude/skills/asvc
-```
-
-从源码开发时，把软链指向仓库即可（编辑仓库即同步生效）：
+首次安装需要显式选择目标；`--target` 可以重复：
 
 ```bash
-ln -sfn "$PWD/skill/asvc" ~/.claude/skills/asvc
+asvc skill install
+asvc skill install --target claude
+asvc skill install --target codex --target claude
 ```
+
+Codex 使用当前标准用户目录 `~/.agents/skills/asvc`，Claude Code 使用
+`~/.claude/skills/asvc`。macOS/Linux 在目标目录创建指向 `$ASVC_HOME/skills/asvc`
+的软连接；Windows 不依赖 Developer Mode 或管理员权限，使用受管文件副本。
+
+安装后，升级版 CLI 首次执行常规服务命令时，会根据版本和 SHA-256 自动同步
+asvc 托管且未经修改的 skill。
+如果目标路径原本已存在且不归 asvc 托管，安装会拒绝覆盖。受管内容被用户修改后，
+自动同步会跳过；主动安装时可以确认覆盖。使用 `asvc skill status` 查看状态。
+`asvc skill uninstall --target <codex|claude>` 始终要求确认；非交互环境需要显式添加
+`--yes`。
 
 之后 agent 在「启动服务 / 重启 / 看日志 / 排查起不来」时会自动参考该 skill。
 也可以在项目 `CLAUDE.md` 里加一句兜底约定：
@@ -232,6 +243,7 @@ ln -sfn "$PWD/skill/asvc" ~/.claude/skills/asvc
 - IPC：macOS/Linux 使用 `$ASVC_HOME/daemon.sock`（可用 `ASVC_SOCKET` 覆盖）；Windows
   使用仅监听 loopback 的动态 TCP 端口，并把端口写入 `$ASVC_HOME/daemon.port`。
 - 每个服务日志落盘 `$ASVC_HOME/logs/<name>.log`，内存保留最近 2000 行供快速查询。
+- 受管 skill 和安装清单保存在 `$ASVC_HOME/skills/asvc`。
 - 服务定义**动态注册**，无需手写配置文件；注册表持久化在 `$ASVC_HOME/registry.json`，
   daemon 重启后自动恢复定义（不自动拉起进程，`asvc start <name>` 即可再启动，无需重新带 `-c`）。
 

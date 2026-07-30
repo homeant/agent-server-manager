@@ -1,5 +1,6 @@
 use std::{
     collections::BTreeMap,
+    io::{self, IsTerminal, Write},
     path::PathBuf,
     process::ExitCode,
     time::{SystemTime, UNIX_EPOCH},
@@ -15,6 +16,7 @@ use crate::{
     client::Client,
     model::{BatchResult, Event, LogLine, LogStream, ServiceInfo, ServiceSpec, ServiceStatus},
     paths::Paths,
+    skill::{self, SkillTarget},
 };
 
 #[derive(Parser)]
@@ -54,6 +56,11 @@ enum Commands {
     Daemon {
         #[command(subcommand)]
         command: DaemonCommand,
+    },
+    /// 安装和管理随当前 CLI 版本提供的 agent skill
+    Skill {
+        #[command(subcommand)]
+        command: SkillCommand,
     },
     #[command(name = "__complete", hide = true)]
     Complete {
@@ -115,6 +122,26 @@ enum DaemonCommand {
 }
 
 #[derive(Subcommand)]
+enum SkillCommand {
+    /// 安装或更新由 asvc 托管的 skill
+    Install(SkillTargetArgs),
+    /// 查看内嵌版本和各安装目标状态
+    Status,
+    /// 卸载由 asvc 托管的 skill
+    Uninstall(SkillTargetArgs),
+}
+
+#[derive(Args)]
+struct SkillTargetArgs {
+    /// 操作目标；可重复指定
+    #[arg(long, value_enum, default_value = "codex")]
+    target: Vec<SkillTarget>,
+    /// 跳过确认；用于非交互环境
+    #[arg(short = 'y', long)]
+    yes: bool,
+}
+
+#[derive(Subcommand)]
 enum CompleteCommand {
     Services,
 }
@@ -142,6 +169,12 @@ pub async fn run() -> ExitCode {
 }
 
 async fn execute(cli: Cli, paths: Paths) -> Result<i32> {
+    if !matches!(
+        &cli.command,
+        Commands::Skill { .. } | Commands::Complete { .. } | Commands::Completion { .. }
+    ) {
+        report_skill_sync(&paths);
+    }
     match cli.command {
         Commands::List => {
             let mut client = Client::connect(&paths, true).await?;
@@ -184,6 +217,136 @@ async fn execute(cli: Cli, paths: Paths) -> Result<i32> {
             Ok(0)
         }
         Commands::Daemon { command } => daemon(command, &paths).await,
+        Commands::Skill { command } => manage_skill(command, &paths),
+    }
+}
+
+fn manage_skill(command: SkillCommand, paths: &Paths) -> Result<i32> {
+    match command {
+        SkillCommand::Install(args) => {
+            let installed = match skill::install(paths, &args.target, args.yes) {
+                Ok(installed) => installed,
+                Err(error) if error.downcast_ref::<skill::ModifiedSkill>().is_some() => {
+                    let modified = error
+                        .downcast_ref::<skill::ModifiedSkill>()
+                        .expect("checked above");
+                    let question = format!(
+                        "{} 已被修改。继续安装将覆盖这些修改，是否继续？",
+                        modified.path.display()
+                    );
+                    if !confirm(&question, false)? {
+                        println!("已取消");
+                        return Ok(0);
+                    }
+                    skill::install(paths, &args.target, true)?
+                }
+                Err(error) => return Err(error),
+            };
+            for target in installed {
+                println!(
+                    "{} skill {}: {}",
+                    target.target.display_name(),
+                    target.state,
+                    target.path.display()
+                );
+            }
+        }
+        SkillCommand::Status => {
+            let status = skill::status(paths)?;
+            println!("内嵌 skill 版本: {}", status.bundled_version);
+            println!("内嵌 SHA-256: {}", status.bundled_sha256);
+            let Some(managed_version) = status.managed_version else {
+                println!("托管状态: 未安装");
+                return Ok(0);
+            };
+            println!("托管版本: {managed_version}");
+            if status.targets.is_empty() {
+                println!("安装目标: 无");
+            } else {
+                for target in status.targets {
+                    println!(
+                        "{}: {} ({})",
+                        target.target.display_name(),
+                        target.state,
+                        target.path.display()
+                    );
+                }
+            }
+        }
+        SkillCommand::Uninstall(args) => {
+            if skill::status(paths)?.managed_version.is_none() {
+                bail!("尚未安装由 asvc 托管的 skill");
+            }
+            let targets = args
+                .target
+                .iter()
+                .map(|target| target.display_name())
+                .collect::<Vec<_>>()
+                .join(", ");
+            let question =
+                format!("将卸载 {targets} skill。请先备份需要保留的本地修改，是否继续？");
+            if !confirm(&question, args.yes)? {
+                println!("已取消");
+                return Ok(0);
+            }
+            for target in skill::uninstall(paths, &args.target)? {
+                println!(
+                    "{} skill {}: {}",
+                    target.target.display_name(),
+                    target.state,
+                    target.path.display()
+                );
+            }
+        }
+    }
+    Ok(0)
+}
+
+fn confirm(question: &str, assume_yes: bool) -> Result<bool> {
+    if assume_yes {
+        return Ok(true);
+    }
+    if !io::stdin().is_terminal() || !io::stderr().is_terminal() {
+        bail!("当前环境无法交互确认；确认操作后请重新执行并添加 --yes");
+    }
+    eprint!("{question} [y/N] ");
+    io::stderr().flush()?;
+    let mut answer = String::new();
+    io::stdin().read_line(&mut answer)?;
+    Ok(matches!(
+        answer.trim().to_ascii_lowercase().as_str(),
+        "y" | "yes"
+    ))
+}
+
+fn report_skill_sync(paths: &Paths) {
+    match skill::sync_if_installed(paths) {
+        Ok(Some(report)) => {
+            if !report.updated.is_empty() {
+                let targets = report
+                    .updated
+                    .iter()
+                    .map(|target| target.display_name())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                eprintln!("skill 已随 asvc 自动同步: {targets}");
+            }
+            if let Some(path) = report.managed_modified {
+                eprintln!(
+                    "警告: {} 已被修改，asvc 已跳过 skill 自动同步",
+                    path.display()
+                );
+            }
+            for (target, path) in report.modified {
+                eprintln!(
+                    "警告: {} skill 路径 {} 不再由 asvc 安全托管，已跳过 skill 自动同步",
+                    target.display_name(),
+                    path.display()
+                );
+            }
+        }
+        Ok(None) => {}
+        Err(error) => eprintln!("警告: skill 自动同步失败: {error}"),
     }
 }
 
@@ -736,9 +899,15 @@ fn completion(shell: Shell) -> &'static str {
 
 const ZSH_COMPLETION: &str = r#"_asvc() {
   local -a commands
-  commands=('start:启动服务' 'stop:停止服务' 'restart:重启服务' 'logs:查看日志' 'list:列出服务' 'info:查看服务详情' 'rm:移除服务' 'daemon:管理 daemon')
+  commands=('start:启动服务' 'stop:停止服务' 'restart:重启服务' 'logs:查看日志' 'list:列出服务' 'info:查看服务详情' 'rm:移除服务' 'daemon:管理 daemon' 'skill:管理 agent skill')
   if (( CURRENT == 2 )); then _describe 'command' commands; return; fi
   local cmd=${words[2]}
+  if (( CURRENT == 3 )) && [[ $cmd == skill ]]; then
+    local -a actions
+    actions=('install:安装 skill' 'status:查看 skill 状态' 'uninstall:卸载 skill')
+    _describe 'action' actions
+    return
+  fi
   if (( CURRENT == 3 )) && [[ $cmd == start || $cmd == stop || $cmd == restart || $cmd == logs || $cmd == info || $cmd == show || $cmd == rm || $cmd == remove ]]; then
     local -a services
     services=( ${(f)"$(command asvc __complete services 2>/dev/null)"} )
@@ -751,7 +920,7 @@ compdef _asvc asvc"#;
 const BASH_COMPLETION: &str = r#"_asvc() {
   local cur="${COMP_WORDS[COMP_CWORD]}"
   if [ "$COMP_CWORD" -eq 1 ]; then
-    COMPREPLY=( $(compgen -W "start stop restart logs list ls info show rm daemon completion" -- "$cur") )
+    COMPREPLY=( $(compgen -W "start stop restart logs list ls info show rm daemon skill completion" -- "$cur") )
     return
   fi
   local cmd="${COMP_WORDS[1]}"
@@ -762,6 +931,7 @@ const BASH_COMPLETION: &str = r#"_asvc() {
       restart|logs|info|show)
         COMPREPLY=( $(compgen -W "$(asvc __complete services 2>/dev/null)" -- "$cur") ) ;;
       daemon) COMPREPLY=( $(compgen -W "status stop" -- "$cur") ) ;;
+      skill) COMPREPLY=( $(compgen -W "install status uninstall" -- "$cur") ) ;;
     esac
   fi
 }
