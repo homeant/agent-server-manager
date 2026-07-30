@@ -1,6 +1,6 @@
 {
   "name": "@homeant/asvc-win32-x64",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Native Windows x64 binary for @homeant/asvc",
   "license": "MIT",
   "author": "homeant",

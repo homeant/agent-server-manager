@@ -108,6 +108,8 @@ pub enum Request {
     Ping { id: u64 },
     #[serde(rename = "list")]
     List { id: u64 },
+    #[serde(rename = "info")]
+    Info { id: u64, name: String },
     #[serde(rename = "register")]
     Register {
         id: u64,
@@ -152,6 +154,7 @@ impl Request {
         match self {
             Self::Ping { id }
             | Self::List { id }
+            | Self::Info { id, .. }
             | Self::Register { id, .. }
             | Self::Start { id, .. }
             | Self::StartAll { id }

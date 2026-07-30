@@ -131,6 +131,14 @@ impl Supervisor {
             .map(ManagedService::info)
     }
 
+    pub async fn info(&self, name: &str) -> Option<ServiceInfo> {
+        let usage = read_process_usage();
+        self.get(name).await.map(|mut info| {
+            add_process_usage(&mut info, &usage);
+            info
+        })
+    }
+
     pub async fn list(&self) -> Vec<ServiceInfo> {
         let usage = read_process_usage();
         let registry = self.registry.lock().await;
@@ -140,12 +148,7 @@ impl Supervisor {
             .filter_map(|name| registry.services.get(name))
             .map(|service| {
                 let mut info = service.info();
-                if let Some(pid) = info.pid
-                    && let Some((cpu, memory)) = usage.get(&pid)
-                {
-                    info.cpu_percent = Some(*cpu);
-                    info.memory_bytes = Some(*memory);
-                }
+                add_process_usage(&mut info, &usage);
                 info
             })
             .collect()
@@ -861,6 +864,15 @@ fn read_process_usage() -> HashMap<u32, (f64, u64)> {
 #[cfg(windows)]
 fn read_process_usage() -> HashMap<u32, (f64, u64)> {
     HashMap::new()
+}
+
+fn add_process_usage(info: &mut ServiceInfo, usage: &HashMap<u32, (f64, u64)>) {
+    if let Some(pid) = info.pid
+        && let Some((cpu, memory)) = usage.get(&pid)
+    {
+        info.cpu_percent = Some(*cpu);
+        info.memory_bytes = Some(*memory);
+    }
 }
 
 fn batch_item(

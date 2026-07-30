@@ -42,7 +42,22 @@ impl Fixture {
     }
 
     fn run(&self, args: &[&str]) -> Output {
-        self.run_with_path(args, &base_path())
+        let output = self.run_unchecked(args);
+        assert!(
+            output.status.success(),
+            "{} {}\nstdout:\n{}\nstderr:\n{}",
+            self.binary,
+            args.join(" "),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        output
+    }
+
+    fn run_unchecked(&self, args: &[&str]) -> Output {
+        let mut command = Command::new(self.binary);
+        configure_command(&mut command, &self.home, &self.asvc_home, &base_path());
+        command.args(args).output().unwrap()
     }
 
     fn run_with_path(&self, args: &[&str], path: &str) -> Output {
@@ -106,6 +121,15 @@ fn standalone_cli_and_daemon_work_without_node_or_version_manager() {
             .contains("running")
     );
     assert!(fixture.stdout(&["list"]).contains("smoke"));
+    let info = fixture.stdout(&["info", "smoke"]);
+    assert!(info.contains("名称: smoke"));
+    assert!(info.contains("状态: running"));
+    assert!(info.contains(&format!("工作目录: {cwd}")));
+    assert!(info.contains(&format!("命令: {}", long_command())));
+    assert!(info.contains("自动重启: 否"));
+    let unknown = fixture.run_unchecked(&["info", "missing"]);
+    assert!(!unknown.status.success());
+    assert!(String::from_utf8_lossy(&unknown.stderr).contains("未知服务: missing"));
     assert!(fixture.stdout(&["stop", "smoke"]).contains("stopped"));
     assert!(
         fixture

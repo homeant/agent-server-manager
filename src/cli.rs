@@ -42,6 +42,9 @@ enum Commands {
     /// 列出服务及状态
     #[command(alias = "ls")]
     List,
+    /// 查看单个服务的完整详情
+    #[command(alias = "show")]
+    Info { name: String },
     /// 停止并移除服务定义
     #[command(alias = "remove")]
     Rm(RemoveArgs),
@@ -144,6 +147,14 @@ async fn execute(cli: Cli, paths: Paths) -> Result<i32> {
             let mut client = Client::connect(&paths, true).await?;
             let services: Vec<ServiceInfo> = client.request(json!({ "type": "list" })).await?;
             print_list(&services);
+            Ok(0)
+        }
+        Commands::Info { name } => {
+            let mut client = Client::connect(&paths, true).await?;
+            let info: ServiceInfo = client
+                .request(json!({ "type": "info", "name": name }))
+                .await?;
+            print_info(&info);
             Ok(0)
         }
         Commands::Logs(args) => logs(args, &paths).await,
@@ -506,6 +517,86 @@ fn print_list(services: &[ServiceInfo]) {
     }
 }
 
+fn print_info(service: &ServiceInfo) {
+    println!("名称: {}", service.spec.name);
+    println!("状态: {}", service.status.as_str());
+    println!(
+        "PID: {}",
+        service
+            .pid
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "-".into())
+    );
+    println!(
+        "CPU: {}",
+        service
+            .cpu_percent
+            .map(|value| format!("{value:.1}%"))
+            .unwrap_or_else(|| "-".into())
+    );
+    println!(
+        "内存: {}",
+        service
+            .memory_bytes
+            .map(format_memory)
+            .unwrap_or_else(|| "-".into())
+    );
+    println!(
+        "启动时间: {}",
+        service
+            .started_at
+            .map(format_time)
+            .unwrap_or_else(|| "-".into())
+    );
+    println!(
+        "运行时长: {}",
+        format_uptime(
+            service
+                .started_at
+                .filter(|_| service.status == ServiceStatus::Running)
+        )
+    );
+    println!(
+        "最后退出码: {}",
+        service
+            .last_exit_code
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "-".into())
+    );
+    println!(
+        "最后退出信号: {}",
+        service.last_exit_signal.as_deref().unwrap_or("-")
+    );
+    println!("重启次数: {}", service.restarts);
+    println!(
+        "自动重启: {}",
+        if service.spec.autorestart {
+            "是"
+        } else {
+            "否"
+        }
+    );
+    println!("正在重启: {}", if service.restarting { "是" } else { "否" });
+    println!(
+        "端口: {}",
+        service
+            .spec
+            .port
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "-".into())
+    );
+    println!("工作目录: {}", service.spec.cwd);
+    println!("命令: {}", service.spec.command);
+    println!("环境变量:");
+    if let Some(env) = &service.spec.env {
+        for (key, value) in env {
+            println!("  {key}={value}");
+        }
+    } else {
+        println!("  （无）");
+    }
+}
+
 fn print_batch(result: &BatchResult) -> i32 {
     if result.items.is_empty() {
         println!("暂无已注册服务，无需操作。");
@@ -645,10 +736,10 @@ fn completion(shell: Shell) -> &'static str {
 
 const ZSH_COMPLETION: &str = r#"_asvc() {
   local -a commands
-  commands=('start:启动服务' 'stop:停止服务' 'restart:重启服务' 'logs:查看日志' 'list:列出服务' 'rm:移除服务' 'daemon:管理 daemon')
+  commands=('start:启动服务' 'stop:停止服务' 'restart:重启服务' 'logs:查看日志' 'list:列出服务' 'info:查看服务详情' 'rm:移除服务' 'daemon:管理 daemon')
   if (( CURRENT == 2 )); then _describe 'command' commands; return; fi
   local cmd=${words[2]}
-  if (( CURRENT == 3 )) && [[ $cmd == start || $cmd == stop || $cmd == restart || $cmd == logs || $cmd == rm || $cmd == remove ]]; then
+  if (( CURRENT == 3 )) && [[ $cmd == start || $cmd == stop || $cmd == restart || $cmd == logs || $cmd == info || $cmd == show || $cmd == rm || $cmd == remove ]]; then
     local -a services
     services=( ${(f)"$(command asvc __complete services 2>/dev/null)"} )
     [[ $cmd == start || $cmd == stop || $cmd == rm || $cmd == remove ]] && services+=(--all)
@@ -660,14 +751,16 @@ compdef _asvc asvc"#;
 const BASH_COMPLETION: &str = r#"_asvc() {
   local cur="${COMP_WORDS[COMP_CWORD]}"
   if [ "$COMP_CWORD" -eq 1 ]; then
-    COMPREPLY=( $(compgen -W "start stop restart logs list ls rm daemon completion" -- "$cur") )
+    COMPREPLY=( $(compgen -W "start stop restart logs list ls info show rm daemon completion" -- "$cur") )
     return
   fi
   local cmd="${COMP_WORDS[1]}"
   if [ "$COMP_CWORD" -eq 2 ]; then
     case "$cmd" in
-      start|stop|restart|logs|rm|remove)
+      start|stop|rm|remove)
         COMPREPLY=( $(compgen -W "$(asvc __complete services 2>/dev/null) --all" -- "$cur") ) ;;
+      restart|logs|info|show)
+        COMPREPLY=( $(compgen -W "$(asvc __complete services 2>/dev/null)" -- "$cur") ) ;;
       daemon) COMPREPLY=( $(compgen -W "status stop" -- "$cur") ) ;;
     esac
   fi

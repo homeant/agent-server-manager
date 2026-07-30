@@ -175,6 +175,12 @@ async fn handle_request(
     match request {
         Request::Ping { .. } => value(json!({ "pong": true })),
         Request::List { .. } => value(supervisor.list().await),
+        Request::Info { name, .. } => value(
+            supervisor
+                .info(&name)
+                .await
+                .ok_or_else(|| anyhow!("未知服务: {name}"))?,
+        ),
         Request::Register { spec, start, .. } => value(supervisor.register(spec, start).await?),
         Request::Start { name, .. } => value(supervisor.start(&name).await?),
         Request::StartAll { .. } => value(supervisor.start_all().await),
