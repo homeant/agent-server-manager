@@ -460,7 +460,7 @@ fn report_skill_sync(paths: &Paths) {
                     target.display_name(),
                     path.display(),
                     text(
-                        "is no longer safely managed by asvc; synchronization was skipped",
+                        "is no longer safely managed by asvc; automatic skill synchronization was skipped",
                         "不再由 asvc 安全托管，已跳过 skill 自动同步"
                     )
                 );
