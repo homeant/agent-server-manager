@@ -20,7 +20,13 @@ use tokio::net::{TcpListener, TcpStream};
 #[cfg(unix)]
 use tokio::net::{UnixListener, UnixStream};
 
-use crate::{model::Request, paths::Paths, supervisor::Supervisor};
+use crate::{
+    config::Config,
+    i18n::{set_locale, text},
+    model::Request,
+    paths::Paths,
+    supervisor::Supervisor,
+};
 
 pub async fn run(paths: Paths) -> Result<()> {
     fs::create_dir_all(&paths.home)?;
@@ -40,8 +46,13 @@ pub async fn run(paths: Paths) -> Result<()> {
             return Ok(());
         }
         let _ = fs::remove_file(&paths.socket);
-        UnixListener::bind(&paths.socket)
-            .with_context(|| format!("无法监听 {}", paths.socket.display()))?
+        UnixListener::bind(&paths.socket).with_context(|| {
+            format!(
+                "{} {}",
+                text("failed to listen on", "无法监听"),
+                paths.socket.display()
+            )
+        })?
     };
     #[cfg(windows)]
     let listener = {
@@ -83,6 +94,7 @@ pub async fn run(paths: Paths) -> Result<()> {
                     stream,
                     Arc::clone(&supervisor),
                     Arc::clone(&shutdown),
+                    paths.clone(),
                 ));
             }
             _ = shutdown.notified() => break,
@@ -99,8 +111,12 @@ pub async fn run(paths: Paths) -> Result<()> {
     Ok(())
 }
 
-async fn handle_connection<S>(stream: S, supervisor: Arc<Supervisor>, shutdown: Arc<Notify>)
-where
+async fn handle_connection<S>(
+    stream: S,
+    supervisor: Arc<Supervisor>,
+    shutdown: Arc<Notify>,
+    paths: Paths,
+) where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
     let (reader, mut writer) = tokio::io::split(stream);
@@ -136,6 +152,9 @@ where
     });
 
     while let Ok(Some(line)) = lines.next_line().await {
+        if let Ok(config) = Config::load(&paths) {
+            set_locale(config.locale);
+        }
         let request: Request = match serde_json::from_str(&line) {
             Ok(request) => request,
             Err(_) => continue,
@@ -179,7 +198,7 @@ async fn handle_request(
             supervisor
                 .info(&name)
                 .await
-                .ok_or_else(|| anyhow!("未知服务: {name}"))?,
+                .ok_or_else(|| anyhow!("{}: {name}", text("unknown service", "未知服务")))?,
         ),
         Request::Register { spec, start, .. } => value(supervisor.register(spec, start).await?),
         Request::Start { name, .. } => value(supervisor.start(&name).await?),
@@ -199,7 +218,7 @@ async fn handle_request(
             let info = supervisor
                 .get(&name)
                 .await
-                .ok_or_else(|| anyhow!("未知服务: {name}"))?;
+                .ok_or_else(|| anyhow!("{}: {name}", text("unknown service", "未知服务")))?;
             attachments.write().await.insert(name.clone());
             let backlog = supervisor.logs(&name, backlog.unwrap_or(200)).await?;
             value(json!({ "info": info, "backlog": backlog }))

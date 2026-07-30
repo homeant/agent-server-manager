@@ -9,6 +9,7 @@ pub struct Paths {
     pub endpoint_file: PathBuf,
     pub pid_file: PathBuf,
     pub lock_file: PathBuf,
+    pub config: PathBuf,
     pub registry: PathBuf,
     pub log_dir: PathBuf,
     #[cfg(unix)]
@@ -29,6 +30,7 @@ impl Paths {
             endpoint_file: home.join("daemon.port"),
             pid_file: home.join("daemon.pid"),
             lock_file: home.join("daemon.lock"),
+            config: home.join("config.json"),
             registry: home.join("registry.json"),
             log_dir: home.join("logs"),
             #[cfg(unix)]

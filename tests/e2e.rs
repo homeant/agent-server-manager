@@ -103,15 +103,15 @@ fn standalone_cli_and_daemon_work_without_node_or_version_manager() {
     assert!(
         fixture
             .stdout(&["daemon", "status"])
-            .contains("daemon 未运行")
+            .contains("daemon is not running")
     );
     assert!(!fixture.asvc_home.join("daemon.pid").exists());
 
-    assert!(fixture.stdout(&["list"]).contains("暂无服务"));
+    assert!(fixture.stdout(&["list"]).contains("no services"));
     assert!(
         fixture
             .stdout(&["daemon", "status"])
-            .contains("daemon 运行中")
+            .contains("daemon is running")
     );
     let daemon_pid = fs::read_to_string(fixture.asvc_home.join("daemon.pid")).unwrap();
     assert_daemon_process(daemon_pid.trim(), fixture.binary);
@@ -124,22 +124,68 @@ fn standalone_cli_and_daemon_work_without_node_or_version_manager() {
     );
     assert!(fixture.stdout(&["list"]).contains("smoke"));
     let info = fixture.stdout(&["info", "smoke"]);
-    assert!(info.contains("名称: smoke"));
-    assert!(info.contains("状态: running"));
-    assert!(info.contains(&format!("工作目录: {cwd}")));
-    assert!(info.contains(&format!("命令: {}", long_command())));
-    assert!(info.contains("自动重启: 否"));
+    assert!(info.contains("Name: smoke"));
+    assert!(info.contains("Status: running"));
+    assert!(info.contains(&format!("Working directory: {cwd}")));
+    assert!(info.contains(&format!("Command: {}", long_command())));
+    assert!(info.contains("Auto restart: no"));
     let unknown = fixture.run_unchecked(&["info", "missing"]);
     assert!(!unknown.status.success());
-    assert!(String::from_utf8_lossy(&unknown.stderr).contains("未知服务: missing"));
+    assert!(String::from_utf8_lossy(&unknown.stderr).contains("unknown service: missing"));
     assert!(fixture.stdout(&["stop", "smoke"]).contains("stopped"));
     assert!(
         fixture
             .stdout(&["daemon", "stop"])
-            .contains("daemon 已停止")
+            .contains("daemon stopped")
     );
 
     wait_until_missing(&fixture.asvc_home.join("daemon.pid"));
+}
+
+#[test]
+fn switches_locale_and_updates_a_running_daemon() {
+    let fixture = Fixture::new();
+
+    assert_eq!(fixture.stdout(&["config", "get", "locale"]).trim(), "en");
+    assert!(
+        fixture
+            .stdout(&["daemon", "status"])
+            .contains("daemon is not running")
+    );
+    assert!(fixture.stdout(&["list"]).contains("no services"));
+
+    assert!(
+        fixture
+            .stdout(&["config", "set", "locale", "zh-CN"])
+            .contains("语言已更新: zh-CN")
+    );
+    assert_eq!(fixture.stdout(&["config", "get", "locale"]).trim(), "zh-CN");
+    assert!(
+        fixture
+            .stdout(&["daemon", "status"])
+            .contains("daemon 运行中")
+    );
+    let unknown = fixture.run_unchecked(&["info", "missing"]);
+    assert!(!unknown.status.success());
+    assert!(String::from_utf8_lossy(&unknown.stderr).contains("未知服务: missing"));
+
+    assert!(
+        fixture
+            .stdout(&["config", "set", "locale", "en"])
+            .contains("Locale updated: en")
+    );
+    let unknown = fixture.run_unchecked(&["info", "missing"]);
+    assert!(!unknown.status.success());
+    assert!(String::from_utf8_lossy(&unknown.stderr).contains("unknown service: missing"));
+
+    let invalid = fixture.run_unchecked(&["config", "set", "local", "zh-CN"]);
+    assert!(!invalid.status.success());
+    assert!(String::from_utf8_lossy(&invalid.stderr).contains("invalid value 'local'"));
+
+    let config: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(fixture.asvc_home.join("config.json")).unwrap())
+            .unwrap();
+    assert_eq!(config["locale"], "en");
 }
 
 #[test]
@@ -228,37 +274,54 @@ fn registration_captures_the_calling_users_path_for_later_restarts() {
 #[test]
 fn installs_syncs_and_uninstalls_managed_agent_skills() {
     let fixture = Fixture::new();
-    let bundled = include_str!("../skill/asvc/SKILL.md");
-    let codex_dir = fixture.home.join(".agents/skills/asvc");
-    let claude_dir = fixture.home.join(".claude/skills/asvc");
+    let skill_name = "local-dev-server-manager";
+    let bundled = include_str!("../skill/asvc-service-manager/SKILL.md").replacen(
+        "name: asvc-service-manager",
+        &format!("name: {skill_name}"),
+        1,
+    );
+    let codex_dir = fixture.home.join(".agents/skills").join(skill_name);
+    let claude_dir = fixture.home.join(".claude/skills").join(skill_name);
     let managed_dir = fixture.asvc_home.join("skills/asvc");
     let manifest_path = managed_dir.join("install.json");
 
     assert!(
         fixture
             .stdout(&["skill", "status"])
-            .contains("托管状态: 未安装")
+            .contains("Managed status: not installed")
     );
     let installed = fixture.stdout(&[
-        "skill", "install", "--target", "codex", "--target", "claude",
+        "skill", "install", "--name", skill_name, "--target", "codex", "--target", "claude",
     ]);
-    assert!(installed.contains("Codex skill 已安装"));
-    assert!(installed.contains("Claude Code skill 已安装"));
+    assert!(installed.contains("Codex skill installed"));
+    assert!(installed.contains("Claude Code skill installed"));
     assert_eq!(
         fs::read_to_string(codex_dir.join("SKILL.md")).unwrap(),
-        bundled
+        bundled.as_str()
     );
     assert_eq!(
         fs::read_to_string(claude_dir.join("SKILL.md")).unwrap(),
-        bundled
+        bundled.as_str()
     );
     assert_skill_install_type(&codex_dir, &managed_dir);
     assert_skill_install_type(&claude_dir, &managed_dir);
 
     let status = fixture.stdout(&["skill", "status"]);
-    assert!(status.contains(&format!("内嵌 skill 版本: {}", env!("CARGO_PKG_VERSION"))));
-    assert!(status.contains("Codex: 最新"));
-    assert!(status.contains("Claude Code: 最新"));
+    assert!(status.contains(&format!(
+        "Bundled skill version: {}",
+        env!("CARGO_PKG_VERSION")
+    )));
+    assert!(status.contains(&format!("Skill name: {skill_name}")));
+    assert!(status.contains("Codex: current"));
+    assert!(status.contains("Claude Code: current"));
+
+    let rename_refused =
+        fixture.run_unchecked(&["skill", "install", "--name", "another-skill-name"]);
+    assert!(!rename_refused.status.success());
+    assert!(
+        String::from_utf8_lossy(&rename_refused.stderr)
+            .contains("uninstall it before changing its name")
+    );
 
     let confirmation_required = fixture.run_unchecked(&["skill", "uninstall", "--target", "codex"]);
     assert!(!confirmation_required.status.success());
@@ -267,12 +330,12 @@ fn installs_syncs_and_uninstalls_managed_agent_skills() {
 
     // Simulate a previously managed skill version. A normal finite command
     // should update it from the skill embedded in the new CLI.
-    let old_skill = "---\nname: asvc\ndescription: old managed copy\n---\nold\n";
-    fs::write(managed_dir.join("SKILL.md"), old_skill).unwrap();
+    let old_skill = format!("---\nname: {skill_name}\ndescription: old managed copy\n---\nold\n");
+    fs::write(managed_dir.join("SKILL.md"), &old_skill).unwrap();
     #[cfg(windows)]
     {
-        fs::write(codex_dir.join("SKILL.md"), old_skill).unwrap();
-        fs::write(claude_dir.join("SKILL.md"), old_skill).unwrap();
+        fs::write(codex_dir.join("SKILL.md"), &old_skill).unwrap();
+        fs::write(claude_dir.join("SKILL.md"), &old_skill).unwrap();
     }
     let old_sha = format!("{:x}", Sha256::digest(old_skill.as_bytes()));
     let mut manifest: serde_json::Value =
@@ -288,20 +351,26 @@ fn installs_syncs_and_uninstalls_managed_agent_skills() {
     .unwrap();
 
     let synced = fixture.run(&["daemon", "status"]);
-    assert!(String::from_utf8_lossy(&synced.stderr).contains("skill 已随 asvc 自动同步"));
+    assert!(
+        String::from_utf8_lossy(&synced.stderr)
+            .contains("Skill automatically synchronized with asvc")
+    );
     assert_eq!(
         fs::read_to_string(codex_dir.join("SKILL.md")).unwrap(),
-        bundled
+        bundled.as_str()
     );
     assert_eq!(
         fs::read_to_string(claude_dir.join("SKILL.md")).unwrap(),
-        bundled
+        bundled.as_str()
     );
 
     // User edits are never overwritten or removed.
     fs::write(codex_dir.join("SKILL.md"), "user-owned edit\n").unwrap();
     let skipped = fixture.run(&["daemon", "status"]);
-    assert!(String::from_utf8_lossy(&skipped.stderr).contains("已跳过 skill 自动同步"));
+    assert!(
+        String::from_utf8_lossy(&skipped.stderr)
+            .contains("skipped automatic skill synchronization")
+    );
     assert_eq!(
         fs::read_to_string(codex_dir.join("SKILL.md")).unwrap(),
         "user-owned edit\n"
@@ -316,11 +385,11 @@ fn installs_syncs_and_uninstalls_managed_agent_skills() {
     assert!(
         fixture
             .stdout(&["skill", "install", "--target", "codex", "--yes",])
-            .contains("Codex skill 已安装")
+            .contains("Codex skill installed")
     );
     assert_eq!(
         fs::read_to_string(codex_dir.join("SKILL.md")).unwrap(),
-        bundled
+        bundled.as_str()
     );
 
     let removed = fixture.stdout(&[
@@ -332,8 +401,8 @@ fn installs_syncs_and_uninstalls_managed_agent_skills() {
         "claude",
         "--yes",
     ]);
-    assert!(removed.contains("Codex skill 已卸载"));
-    assert!(removed.contains("Claude Code skill 已卸载"));
+    assert!(removed.contains("Codex skill uninstalled"));
+    assert!(removed.contains("Claude Code skill uninstalled"));
     assert!(!path_lexists(&codex_dir));
     assert!(!path_lexists(&claude_dir));
     assert!(!manifest_path.exists());
@@ -342,18 +411,43 @@ fn installs_syncs_and_uninstalls_managed_agent_skills() {
 #[test]
 fn refuses_to_replace_an_unmanaged_skill() {
     let fixture = Fixture::new();
-    let skill_file = fixture.home.join(".agents/skills/asvc/SKILL.md");
+    let skill_file = fixture
+        .home
+        .join(".agents/skills/asvc-service-manager/SKILL.md");
     fs::create_dir_all(skill_file.parent().unwrap()).unwrap();
     fs::write(&skill_file, "third-party skill\n").unwrap();
 
     let output = fixture.run_unchecked(&["skill", "install"]);
     assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("不归 asvc 托管"));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("not managed by asvc"));
     assert_eq!(
         fs::read_to_string(&skill_file).unwrap(),
         "third-party skill\n"
     );
     assert!(!fixture.asvc_home.join("skills/asvc/install.json").exists());
+}
+
+#[test]
+fn preserves_the_legacy_asvc_skill_name() {
+    let fixture = Fixture::new();
+    let invalid = fixture.run_unchecked(&["skill", "install", "--name", "Not Valid"]);
+    assert!(!invalid.status.success());
+    assert!(String::from_utf8_lossy(&invalid.stderr).contains("may contain only"));
+
+    fixture.stdout(&["skill", "install", "--name", "asvc"]);
+    let legacy_dir = fixture.home.join(".agents/skills/asvc");
+    assert!(
+        fs::read_to_string(legacy_dir.join("SKILL.md"))
+            .unwrap()
+            .starts_with("---\nname: asvc\n")
+    );
+    assert!(
+        fixture
+            .stdout(&["skill", "status"])
+            .contains("Skill name: asvc")
+    );
+    fixture.stdout(&["skill", "uninstall", "--yes"]);
+    assert!(!path_lexists(&legacy_dir));
 }
 
 fn configure_command(command: &mut Command, home: &Path, asvc_home: &Path, path: &str) {

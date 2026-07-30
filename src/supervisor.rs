@@ -22,6 +22,7 @@ use tokio::{
 };
 
 use crate::{
+    i18n::text,
     model::{
         BatchItemResult, BatchResult, Event, LogLine, LogStream, ServiceInfo, ServiceSpec,
         ServiceStatus,
@@ -33,6 +34,10 @@ const RING_SIZE: usize = 2_000;
 const STOP_GRACE: Duration = Duration::from_secs(5);
 const SETTLE: Duration = Duration::from_secs(1);
 const BATCH_CONCURRENCY: usize = 4;
+
+fn unknown_service(name: &str) -> anyhow::Error {
+    anyhow!("{}: {name}", text("unknown service", "未知服务"))
+}
 
 #[derive(Clone, Copy)]
 enum KillMode {
@@ -102,8 +107,13 @@ pub struct Supervisor {
 
 impl Supervisor {
     pub fn new(paths: Paths) -> Result<Arc<Self>> {
-        fs::create_dir_all(&paths.log_dir)
-            .with_context(|| format!("无法创建日志目录 {}", paths.log_dir.display()))?;
+        fs::create_dir_all(&paths.log_dir).with_context(|| {
+            format!(
+                "{} {}",
+                text("failed to create log directory", "无法创建日志目录"),
+                paths.log_dir.display()
+            )
+        })?;
         let (events, _) = broadcast::channel(4_096);
         let supervisor = Arc::new(Self {
             registry: Mutex::new(load_registry(&paths.registry)),
@@ -159,7 +169,7 @@ impl Supervisor {
         let service = registry
             .services
             .get(name)
-            .ok_or_else(|| anyhow!("未知服务: {name}"))?;
+            .ok_or_else(|| unknown_service(name))?;
         let skip = service.ring.len().saturating_sub(lines);
         Ok(service.ring.iter().skip(skip).cloned().collect())
     }
@@ -207,13 +217,11 @@ impl Supervisor {
                 return Ok(info);
             }
         } else {
-            bail!("未知服务: {name}");
+            return Err(unknown_service(name));
         }
         self.spawn_process(name).await?;
         sleep(SETTLE).await;
-        self.get(name)
-            .await
-            .ok_or_else(|| anyhow!("未知服务: {name}"))
+        self.get(name).await.ok_or_else(|| unknown_service(name))
     }
 
     pub async fn stop(self: &Arc<Self>, name: &str) -> Result<ServiceInfo> {
@@ -227,7 +235,7 @@ impl Supervisor {
             let service = registry
                 .services
                 .get_mut(name)
-                .ok_or_else(|| anyhow!("未知服务: {name}"))?;
+                .ok_or_else(|| unknown_service(name))?;
             let Some(pid) = service.pid else {
                 service.status = ServiceStatus::Stopped;
                 let info = service.info();
@@ -247,17 +255,25 @@ impl Supervisor {
             .await
             .is_err()
         {
-            self.system(name, "SIGTERM 超时，强制 SIGKILL".to_string())
-                .await;
+            self.system(
+                name,
+                text(
+                    "SIGTERM timed out; forcing SIGKILL",
+                    "SIGTERM 超时，强制 SIGKILL",
+                )
+                .to_string(),
+            )
+            .await;
             kill_group(pid, KillMode::Force);
             let _ = timeout(Duration::from_secs(2), self.wait_for_exit(name, pid)).await;
         }
-        let info = self
-            .get(name)
-            .await
-            .ok_or_else(|| anyhow!("未知服务: {name}"))?;
+        let info = self.get(name).await.ok_or_else(|| unknown_service(name))?;
         if info.pid == Some(pid) {
-            bail!("服务进程组 {pid} 在 SIGKILL 后仍未退出");
+            if crate::i18n::locale() == crate::i18n::Locale::English {
+                bail!("service process group {pid} did not exit after SIGKILL");
+            } else {
+                bail!("服务进程组 {pid} 在 SIGKILL 后仍未退出");
+            }
         }
         Ok(info)
     }
@@ -282,7 +298,7 @@ impl Supervisor {
     pub async fn restart(self: &Arc<Self>, name: &str) -> Result<ServiceInfo> {
         let _mutation = self.mutation.lock().await;
         if !self.has(name).await {
-            bail!("未知服务: {name}");
+            return Err(unknown_service(name));
         }
         self.system(name, "restarting...".to_string()).await;
         {
@@ -298,9 +314,7 @@ impl Supervisor {
             }
             self.spawn_process(name).await?;
             sleep(SETTLE).await;
-            self.get(name)
-                .await
-                .ok_or_else(|| anyhow!("未知服务: {name}"))
+            self.get(name).await.ok_or_else(|| unknown_service(name))
         }
         .await;
         {
@@ -371,7 +385,11 @@ impl Supervisor {
                         &task_name,
                         "failed",
                         Some(info.clone()),
-                        Some(format!("启动后状态为 {}", info.status.as_str())),
+                        Some(if crate::i18n::locale() == crate::i18n::Locale::English {
+                            format!("status after startup: {}", info.status.as_str())
+                        } else {
+                            format!("启动后状态为 {}", info.status.as_str())
+                        }),
                     ),
                     Err(error) => batch_item(&task_name, "failed", None, Some(error.to_string())),
                 }
@@ -492,7 +510,7 @@ impl Supervisor {
                 let service = registry
                     .services
                     .get_mut(name)
-                    .ok_or_else(|| anyhow!("未知服务: {name}"))?;
+                    .ok_or_else(|| unknown_service(name))?;
                 service.status = ServiceStatus::Starting;
                 service.intentional_stop = false;
                 service.generation += 1;
@@ -540,7 +558,12 @@ impl Supervisor {
                 }
             };
 
-            let pid = child.id().ok_or_else(|| anyhow!("启动后未获得 pid"))?;
+            let pid = child.id().ok_or_else(|| {
+                anyhow!(
+                    "{}",
+                    text("no pid was returned after startup", "启动后未获得 pid")
+                )
+            })?;
             let stdout = child.stdout.take();
             let stderr = child.stderr.take();
             {

@@ -86,11 +86,15 @@ try {
   };
   const version = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version;
   assert.equal(command(asvc, ["--version"], env).trim(), version);
-  assert.match(command(asvc, ["daemon", "status"], env), /daemon 未运行/);
-  assert.match(command(asvc, ["skill", "status"], env), /托管状态: 未安装/);
-  assert.match(command(asvc, ["skill", "install"], env), /Codex skill 已安装/);
-  const installedSkillDir = path.join(home, ".agents", "skills", "asvc");
-  assert.match(fs.readFileSync(path.join(installedSkillDir, "SKILL.md"), "utf8"), /name: asvc/);
+  assert.equal(command(asvc, ["config", "get", "locale"], env).trim(), "en");
+  assert.match(command(asvc, ["daemon", "status"], env), /daemon is not running/);
+  assert.match(command(asvc, ["skill", "status"], env), /Managed status: not installed/);
+  assert.match(command(asvc, ["skill", "install"], env), /Codex skill installed/);
+  const installedSkillDir = path.join(home, ".agents", "skills", "asvc-service-manager");
+  assert.match(
+    fs.readFileSync(path.join(installedSkillDir, "SKILL.md"), "utf8"),
+    /name: asvc-service-manager/
+  );
   assert.equal(
     fs.lstatSync(installedSkillDir).isSymbolicLink(),
     process.platform !== "win32",
@@ -98,9 +102,9 @@ try {
   );
   assert.match(
     command(asvc, ["skill", "uninstall", "--yes"], env),
-    /Codex skill 已卸载/
+    /Codex skill uninstalled/
   );
-  assert.match(command(asvc, ["list"], env), /暂无服务/);
+  assert.match(command(asvc, ["list"], env), /no services/);
 
   const daemonPid = fs.readFileSync(path.join(asvcHome, "daemon.pid"), "utf8").trim();
   if (process.platform === "win32") {
@@ -112,7 +116,7 @@ try {
     const daemonCommand = command("/bin/ps", ["-p", daemonPid, "-o", "command="], env);
     assert.match(daemonCommand, new RegExp(`asvc-${platform}/bin/${executable} __daemon`));
   }
-  assert.match(command(asvc, ["daemon", "stop"], env), /daemon 已停止/);
+  assert.match(command(asvc, ["daemon", "stop"], env), /daemon stopped/);
   console.log("packed npm install smoke test passed");
 } finally {
   fs.rmSync(fixture, {

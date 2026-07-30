@@ -42,10 +42,11 @@ function run(args) {
 
 try {
   assert.equal(run(["--version"]).trim(), pkg.version);
-  assert.match(run(["daemon", "status"]), /daemon 未运行/);
-  assert.match(run(["list"]), /暂无服务/);
-  assert.match(run(["daemon", "status"]), /daemon 运行中/);
-  assert.match(run(["daemon", "stop"]), /daemon 已停止/);
+  assert.equal(run(["config", "get", "locale"]).trim(), "en");
+  assert.match(run(["daemon", "status"]), /daemon is not running/);
+  assert.match(run(["list"]), /no services/);
+  assert.match(run(["daemon", "status"]), /daemon is running/);
+  assert.match(run(["daemon", "stop"]), /daemon stopped/);
   console.log("npm launcher smoke test passed");
 } finally {
   spawnSync(binary, ["daemon", "stop"], { env, encoding: "utf8", timeout: 5_000 });

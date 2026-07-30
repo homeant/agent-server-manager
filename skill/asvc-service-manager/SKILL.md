@@ -1,5 +1,5 @@
 ---
-name: asvc
+name: asvc-service-manager
 description: >-
   Manage local development servers through the `asvc` CLI so the human and the agent
   share one daemon instead of spawning duplicate processes. Use whenever starting,

@@ -156,13 +156,32 @@ asvc rm --all --yes       # 停止并删除所有注册（日志保留）
 asvc daemon status        # 看 daemon 是否运行
 asvc daemon stop          # 停 daemon（会先关闭所有服务）
 
-asvc skill install                         # 安装当前版本内嵌的 skill 到 Codex
-asvc skill install --target claude         # 安装到 Claude Code
-asvc skill status                          # 查看内嵌/托管版本和同步状态
+asvc config get locale          # 查看当前语言（默认 en）
+asvc config set locale zh-CN    # 切换为简体中文
+asvc config set locale en       # 切换回英语
+
+asvc skill install                                  # 以默认名称安装到 Codex
+asvc skill install --name local-service-manager     # 自定义 Skill 名称
+asvc skill install --target claude                  # 安装到 Claude Code
+asvc skill status                                   # 查看名称、版本和同步状态
 ```
 
 `start` 参数：`-c/--cmd`（命令，经 shell 执行）、`-w/--cwd`（默认当前目录）、
 `-p/--port`（仅展示/排查）、`-e/--env KEY=VAL`（可多个）、`--autorestart`、`-d/--detach`（后台）。
+
+### 语言
+
+CLI 默认使用英语。通过标准的 `locale` 配置项切换语言：
+
+```bash
+asvc config get locale
+asvc config set locale zh-CN
+asvc config set locale en
+```
+
+语言值支持 `en`（也接受 `en-US`）和 `zh-CN`（也接受 `zh`）。配置项必须拼写为
+`locale`，不会兼容错误的 `local`。设置后立即影响后续 CLI 输出；已经运行的 daemon
+会在下一次请求时重新读取配置，不需要重启。
 
 ### 批量管理
 
@@ -197,7 +216,8 @@ daemon 会在一次批量请求开始时固定服务名单，最多同时处理 
 
 ## 让 agent 用起来（Codex / Claude Code Skill）
 
-npm 包和原生二进制都内嵌同版本的 [`skill/asvc/SKILL.md`](skill/asvc/SKILL.md)。
+npm 包和原生二进制都内嵌同版本的
+[`skill/asvc-service-manager/SKILL.md`](skill/asvc-service-manager/SKILL.md)。
 它教 agent 在启动、查询、重启和查看日志时使用 `asvc`，并强调后台启动必须带 `-d`、
 按退出码判断成败。
 
@@ -205,13 +225,19 @@ npm 包和原生二进制都内嵌同版本的 [`skill/asvc/SKILL.md`](skill/asv
 
 ```bash
 asvc skill install
+asvc skill install --name local-service-manager
 asvc skill install --target claude
 asvc skill install --target codex --target claude
 ```
 
-Codex 使用当前标准用户目录 `~/.agents/skills/asvc`，Claude Code 使用
-`~/.claude/skills/asvc`。macOS/Linux 在目标目录创建指向 `$ASVC_HOME/skills/asvc`
-的软连接；Windows 不依赖 Developer Mode 或管理员权限，使用受管文件副本。
+默认 Skill 名称为 `asvc-service-manager`。`--name` 接受 1–64 个小写字母、数字或
+连字符，并同时决定安装目录和 `SKILL.md` frontmatter 中的 `name`。名称会记录在安装
+清单中，后续升级和未带 `--name` 的安装会继续使用原名称；如需改名，先卸载再重新安装。
+
+Codex 使用当前标准用户目录 `~/.agents/skills/<name>`，Claude Code 使用
+`~/.claude/skills/<name>`。macOS/Linux 在目标目录创建指向
+`$ASVC_HOME/skills/asvc` 的软连接；Windows 不依赖 Developer Mode 或管理员权限，
+使用受管文件副本。
 
 安装后，升级版 CLI 首次执行常规服务命令时，会根据版本和 SHA-256 自动同步
 asvc 托管且未经修改的 skill。
@@ -240,6 +266,7 @@ asvc 托管且未经修改的 skill。
 ## 数据与配置
 
 - 全局单实例，家目录默认 `~/.asvc`（可用 `ASVC_HOME` 覆盖）。
+- CLI 配置保存在 `$ASVC_HOME/config.json`；未配置语言时默认使用英语。
 - IPC：macOS/Linux 使用 `$ASVC_HOME/daemon.sock`（可用 `ASVC_SOCKET` 覆盖）；Windows
   使用仅监听 loopback 的动态 TCP 端口，并把端口写入 `$ASVC_HOME/daemon.port`。
 - 每个服务日志落盘 `$ASVC_HOME/logs/<name>.log`，内存保留最近 2000 行供快速查询。

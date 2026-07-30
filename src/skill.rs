@@ -14,12 +14,16 @@ use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::paths::{Paths, user_home};
+use crate::{
+    i18n::{Locale, locale, text},
+    paths::{Paths, user_home},
+};
 
-pub const BUNDLED_SKILL: &str = include_str!("../skill/asvc/SKILL.md");
+pub const BUNDLED_SKILL: &str = include_str!("../skill/asvc-service-manager/SKILL.md");
 
 const SCHEMA_VERSION: u32 = 1;
-const SKILL_NAME: &str = "asvc";
+const MANAGED_SKILL_ID: &str = "asvc";
+pub const DEFAULT_SKILL_NAME: &str = "asvc-service-manager";
 const MANIFEST_NAME: &str = "install.json";
 const SKILL_FILE: &str = "SKILL.md";
 static TEMP_ID: AtomicU64 = AtomicU64::new(1);
@@ -39,14 +43,20 @@ impl SkillTarget {
         }
     }
 
-    fn install_dir(self) -> Result<PathBuf> {
+    fn install_dir(self, skill_name: &str) -> Result<PathBuf> {
         let home = user_home();
         if home == Path::new(".") {
-            bail!("无法确定用户主目录，请设置 HOME 或 USERPROFILE");
+            bail!(
+                "{}",
+                text(
+                    "could not determine the user home; set HOME or USERPROFILE",
+                    "无法确定用户主目录，请设置 HOME 或 USERPROFILE"
+                )
+            );
         }
         Ok(match self {
-            Self::Codex => home.join(".agents").join("skills").join(SKILL_NAME),
-            Self::Claude => home.join(".claude").join("skills").join(SKILL_NAME),
+            Self::Codex => home.join(".agents").join("skills").join(skill_name),
+            Self::Claude => home.join(".claude").join("skills").join(skill_name),
         })
     }
 }
@@ -85,6 +95,7 @@ pub struct TargetStatus {
 pub struct SkillStatus {
     pub bundled_version: &'static str,
     pub bundled_sha256: String,
+    pub skill_name: String,
     pub managed_version: Option<String>,
     pub targets: Vec<TargetStatus>,
 }
@@ -96,7 +107,12 @@ pub struct ModifiedSkill {
 
 impl fmt::Display for ModifiedSkill {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "{} 已被修改", self.path.display())
+        write!(
+            formatter,
+            "{} {}",
+            self.path.display(),
+            text("was modified", "已被修改")
+        )
     }
 }
 
@@ -105,42 +121,67 @@ impl Error for ModifiedSkill {}
 pub fn install(
     paths: &Paths,
     targets: &[SkillTarget],
+    requested_name: Option<&str>,
     overwrite_modified: bool,
 ) -> Result<Vec<TargetStatus>> {
     let targets = unique_targets(targets);
     if targets.is_empty() {
-        bail!("请至少指定一个 skill 安装目标");
+        bail!(
+            "{}",
+            text(
+                "specify at least one skill installation target",
+                "请至少指定一个 skill 安装目标"
+            )
+        );
+    }
+    if let Some(name) = requested_name {
+        validate_skill_name(name)?;
     }
     with_lock(paths, || {
-        install_locked(paths, &targets, overwrite_modified)
+        install_locked(paths, &targets, requested_name, overwrite_modified)
     })
 }
 
 pub fn uninstall(paths: &Paths, targets: &[SkillTarget]) -> Result<Vec<TargetStatus>> {
     let targets = unique_targets(targets);
     if targets.is_empty() {
-        bail!("请至少指定一个 skill 卸载目标");
+        bail!(
+            "{}",
+            text(
+                "specify at least one skill uninstall target",
+                "请至少指定一个 skill 卸载目标"
+            )
+        );
     }
     if !manifest_path(paths).exists() {
-        bail!("尚未安装由 asvc 托管的 skill");
+        bail!(
+            "{}",
+            text(
+                "no asvc-managed skill is installed",
+                "尚未安装由 asvc 托管的 skill"
+            )
+        );
     }
     with_lock(paths, || uninstall_locked(paths, &targets))
 }
 
 pub fn status(paths: &Paths) -> Result<SkillStatus> {
-    let bundled_sha256 = sha256(BUNDLED_SKILL.as_bytes());
     let managed_root = absolute_path(&managed_dir(paths))?;
     let path = manifest_path(paths);
     if !path.exists() {
+        let bundled_skill = render_skill(DEFAULT_SKILL_NAME)?;
         return Ok(SkillStatus {
             bundled_version: env!("CARGO_PKG_VERSION"),
-            bundled_sha256,
+            bundled_sha256: sha256(bundled_skill.as_bytes()),
+            skill_name: DEFAULT_SKILL_NAME.into(),
             managed_version: None,
             targets: Vec::new(),
         });
     }
     let manifest = load_manifest(&path)?;
     validate_manifest(&manifest)?;
+    let bundled_skill = render_skill(&manifest.skill_name)?;
+    let bundled_sha256 = sha256(bundled_skill.as_bytes());
     let targets = manifest
         .targets
         .iter()
@@ -153,6 +194,7 @@ pub fn status(paths: &Paths) -> Result<SkillStatus> {
     Ok(SkillStatus {
         bundled_version: env!("CARGO_PKG_VERSION"),
         bundled_sha256,
+        skill_name: manifest.skill_name,
         managed_version: Some(manifest.cli_version),
         targets,
     })
@@ -168,12 +210,28 @@ pub fn sync_if_installed(paths: &Paths) -> Result<Option<SyncReport>> {
 fn install_locked(
     paths: &Paths,
     targets: &[SkillTarget],
+    requested_name: Option<&str>,
     overwrite_modified: bool,
 ) -> Result<Vec<TargetStatus>> {
     let manifest_file = manifest_path(paths);
     let mut manifest = if manifest_file.exists() {
         let manifest = load_manifest(&manifest_file)?;
         validate_manifest(&manifest)?;
+        if let Some(requested_name) = requested_name
+            && requested_name != manifest.skill_name
+        {
+            if locale() == Locale::English {
+                bail!(
+                    "the skill is installed as {}; uninstall it before changing its name",
+                    manifest.skill_name
+                );
+            } else {
+                bail!(
+                    "skill 已按名称 {} 安装；如需改名，请先卸载后重新安装",
+                    manifest.skill_name
+                );
+            }
+        }
         if managed_file_modified(paths, &manifest)? && !overwrite_modified {
             return Err(ModifiedSkill {
                 path: managed_skill_path(paths),
@@ -184,25 +242,30 @@ fn install_locked(
     } else {
         if path_exists(&managed_dir(paths)) {
             bail!(
-                "{} 已存在但缺少 asvc 托管清单；请先备份并移走该目录",
-                managed_dir(paths).display()
+                "{} {}",
+                managed_dir(paths).display(),
+                text(
+                    "exists without an asvc manifest; back it up and move it before retrying",
+                    "已存在但缺少 asvc 托管清单；请先备份并移走该目录"
+                )
             );
         }
         InstallManifest {
             schema_version: SCHEMA_VERSION,
-            skill_name: SKILL_NAME.into(),
+            skill_name: requested_name.unwrap_or(DEFAULT_SKILL_NAME).into(),
             cli_version: env!("CARGO_PKG_VERSION").into(),
-            bundled_sha256: sha256(BUNDLED_SKILL.as_bytes()),
+            bundled_sha256: String::new(),
             targets: Vec::new(),
         }
     };
-    let bundled_sha256 = sha256(BUNDLED_SKILL.as_bytes());
+    let bundled_skill = render_skill(&manifest.skill_name)?;
+    let bundled_sha256 = sha256(bundled_skill.as_bytes());
     let managed_root = absolute_path(&managed_dir(paths))?;
 
     // Validate all targets first so a collision cannot leave a partial
     // installation that is absent from the manifest.
     for target in targets {
-        let install_dir = target.install_dir()?;
+        let install_dir = target.install_dir(&manifest.skill_name)?;
         let record = manifest
             .targets
             .iter()
@@ -210,12 +273,21 @@ fn install_locked(
         if let Some(record) = record
             && record.path != install_dir
         {
-            bail!(
-                "{} skill 已由 asvc 托管在 {}，当前主目录解析为 {}",
-                target.display_name(),
-                record.path.display(),
-                install_dir.display()
-            );
+            if locale() == Locale::English {
+                bail!(
+                    "{} skill is managed at {}, but the current home resolves to {}",
+                    target.display_name(),
+                    record.path.display(),
+                    install_dir.display()
+                );
+            } else {
+                bail!(
+                    "{} skill 已由 asvc 托管在 {}，当前主目录解析为 {}",
+                    target.display_name(),
+                    record.path.display(),
+                    install_dir.display()
+                );
+            }
         }
         preflight_install_target(
             record,
@@ -226,11 +298,16 @@ fn install_locked(
         )?;
     }
 
-    write_if_changed(&managed_skill_path(paths), BUNDLED_SKILL.as_bytes())?;
+    write_if_changed(&managed_skill_path(paths), bundled_skill.as_bytes())?;
     let mut installed = Vec::new();
     for target in targets {
-        let install_dir = target.install_dir()?;
-        install_target(&install_dir, &managed_root, &bundled_sha256)?;
+        let install_dir = target.install_dir(&manifest.skill_name)?;
+        install_target(
+            &install_dir,
+            &managed_root,
+            bundled_skill.as_bytes(),
+            &bundled_sha256,
+        )?;
         if let Some(record) = manifest
             .targets
             .iter_mut()
@@ -247,7 +324,7 @@ fn install_locked(
         installed.push(TargetStatus {
             target: *target,
             path: install_dir,
-            state: "已安装",
+            state: text("installed", "已安装"),
         });
     }
     manifest.targets.sort_by_key(|record| record.target);
@@ -282,8 +359,8 @@ fn uninstall_locked(paths: &Paths, targets: &[SkillTarget]) -> Result<Vec<Target
         else {
             removed.push(TargetStatus {
                 target: *target,
-                path: target.install_dir()?,
-                state: "未安装",
+                path: target.install_dir(&manifest.skill_name)?,
+                state: text("not installed", "未安装"),
             });
             continue;
         };
@@ -292,7 +369,7 @@ fn uninstall_locked(paths: &Paths, targets: &[SkillTarget]) -> Result<Vec<Target
         removed.push(TargetStatus {
             target: *target,
             path: record.path,
-            state: "已卸载",
+            state: text("uninstalled", "已卸载"),
         });
     }
 
@@ -313,7 +390,8 @@ fn sync_locked(paths: &Paths) -> Result<SyncReport> {
     let manifest_file = manifest_path(paths);
     let mut manifest = load_manifest(&manifest_file)?;
     validate_manifest(&manifest)?;
-    let bundled_sha256 = sha256(BUNDLED_SKILL.as_bytes());
+    let bundled_skill = render_skill(&manifest.skill_name)?;
+    let bundled_sha256 = sha256(bundled_skill.as_bytes());
     let managed_dir = absolute_path(&managed_dir(paths))?;
     let mut report = SyncReport::default();
 
@@ -322,12 +400,13 @@ fn sync_locked(paths: &Paths) -> Result<SyncReport> {
         return Ok(report);
     }
     let version_changed = manifest.bundled_sha256 != bundled_sha256;
-    write_if_changed(&managed_skill_path(paths), BUNDLED_SKILL.as_bytes())?;
+    write_if_changed(&managed_skill_path(paths), bundled_skill.as_bytes())?;
 
     for record in &mut manifest.targets {
         sync_target(
             record,
             &managed_dir,
+            bundled_skill.as_bytes(),
             &bundled_sha256,
             version_changed,
             &mut report,
@@ -343,8 +422,12 @@ fn ensure_managed_unmodified(paths: &Paths, manifest: &InstallManifest) -> Resul
     let skill_file = managed_skill_path(paths);
     if managed_file_modified(paths, manifest)? {
         bail!(
-            "{} 已被修改，asvc 不会覆盖或删除；请先备份并移走该文件",
-            skill_file.display()
+            "{} {}",
+            skill_file.display(),
+            text(
+                "was modified; asvc will not overwrite or remove it. Back it up and move it first",
+                "已被修改，asvc 不会覆盖或删除；请先备份并移走该文件"
+            )
         );
     }
     Ok(())
@@ -356,7 +439,7 @@ fn managed_file_modified(paths: &Paths, manifest: &InstallManifest) -> Result<bo
         return Ok(false);
     }
     let current_sha256 = sha256(&fs::read(&skill_file)?);
-    let bundled_sha256 = sha256(BUNDLED_SKILL.as_bytes());
+    let bundled_sha256 = sha256(render_skill(&manifest.skill_name)?.as_bytes());
     Ok(current_sha256 != manifest.bundled_sha256 && current_sha256 != bundled_sha256)
 }
 
@@ -371,8 +454,12 @@ fn preflight_install_target(
     match record {
         Some(_) => validate_managed_link(install_dir, managed_dir, true),
         None if path_exists(install_dir) => bail!(
-            "{} 已存在且不归 asvc 托管；请先移动或删除后重试",
-            install_dir.display()
+            "{} {}",
+            install_dir.display(),
+            text(
+                "already exists and is not managed by asvc; move or remove it before retrying",
+                "已存在且不归 asvc 托管；请先移动或删除后重试"
+            )
         ),
         None => Ok(()),
     }
@@ -395,25 +482,39 @@ fn preflight_install_target(
         }
         Some(_) => Ok(()),
         None if path_exists(install_dir) => bail!(
-            "{} 已存在且不归 asvc 托管；请先移动或删除后重试",
-            install_dir.display()
+            "{} {}",
+            install_dir.display(),
+            text(
+                "already exists and is not managed by asvc; move or remove it before retrying",
+                "已存在且不归 asvc 托管；请先移动或删除后重试"
+            )
         ),
         None => Ok(()),
     }
 }
 
 #[cfg(unix)]
-fn install_target(install_dir: &Path, managed_dir: &Path, _bundled_sha256: &str) -> Result<()> {
+fn install_target(
+    install_dir: &Path,
+    managed_dir: &Path,
+    _bundled_skill: &[u8],
+    _bundled_sha256: &str,
+) -> Result<()> {
     if path_exists(install_dir) {
         return validate_managed_link(install_dir, managed_dir, false);
     }
-    let parent = install_dir
-        .parent()
-        .ok_or_else(|| anyhow!("{} 没有父目录", install_dir.display()))?;
+    let parent = install_dir.parent().ok_or_else(|| {
+        anyhow!(
+            "{} {}",
+            install_dir.display(),
+            text("has no parent directory", "没有父目录")
+        )
+    })?;
     fs::create_dir_all(parent)?;
     std::os::unix::fs::symlink(managed_dir, install_dir).with_context(|| {
         format!(
-            "无法创建 skill 软连接 {} → {}",
+            "{} {} → {}",
+            text("failed to create skill symlink", "无法创建 skill 软连接"),
             install_dir.display(),
             managed_dir.display()
         )
@@ -421,8 +522,13 @@ fn install_target(install_dir: &Path, managed_dir: &Path, _bundled_sha256: &str)
 }
 
 #[cfg(windows)]
-fn install_target(install_dir: &Path, _managed_dir: &Path, _bundled_sha256: &str) -> Result<()> {
-    write_if_changed(&install_dir.join(SKILL_FILE), BUNDLED_SKILL.as_bytes())?;
+fn install_target(
+    install_dir: &Path,
+    _managed_dir: &Path,
+    bundled_skill: &[u8],
+    _bundled_sha256: &str,
+) -> Result<()> {
+    write_if_changed(&install_dir.join(SKILL_FILE), bundled_skill)?;
     Ok(())
 }
 
@@ -440,7 +546,13 @@ fn preflight_uninstall_target(record: &TargetRecord, _managed_dir: &Path) -> Res
 #[cfg(unix)]
 fn remove_target(path: &Path) -> Result<()> {
     if path_exists(path) {
-        fs::remove_file(path).with_context(|| format!("无法删除软连接 {}", path.display()))?;
+        fs::remove_file(path).with_context(|| {
+            format!(
+                "{} {}",
+                text("failed to remove symlink", "无法删除软连接"),
+                path.display()
+            )
+        })?;
     }
     Ok(())
 }
@@ -449,8 +561,13 @@ fn remove_target(path: &Path) -> Result<()> {
 fn remove_target(path: &Path) -> Result<()> {
     let skill_file = path.join(SKILL_FILE);
     if path_exists(&skill_file) {
-        fs::remove_file(&skill_file)
-            .with_context(|| format!("无法删除 {}", skill_file.display()))?;
+        fs::remove_file(&skill_file).with_context(|| {
+            format!(
+                "{} {}",
+                text("failed to remove", "无法删除"),
+                skill_file.display()
+            )
+        })?;
     }
     // Preserve the directory if the user placed any other resources in it.
     let _ = fs::remove_dir(path);
@@ -461,12 +578,13 @@ fn remove_target(path: &Path) -> Result<()> {
 fn sync_target(
     record: &mut TargetRecord,
     managed_dir: &Path,
+    bundled_skill: &[u8],
     bundled_sha256: &str,
     version_changed: bool,
     report: &mut SyncReport,
 ) -> Result<()> {
     if !path_exists(&record.path) {
-        install_target(&record.path, managed_dir, bundled_sha256)?;
+        install_target(&record.path, managed_dir, bundled_skill, bundled_sha256)?;
         report.updated.push(record.target);
     } else if validate_managed_link(&record.path, managed_dir, false).is_err() {
         report.modified.push((record.target, record.path.clone()));
@@ -482,13 +600,14 @@ fn sync_target(
 fn sync_target(
     record: &mut TargetRecord,
     _managed_dir: &Path,
+    bundled_skill: &[u8],
     bundled_sha256: &str,
     _version_changed: bool,
     report: &mut SyncReport,
 ) -> Result<()> {
     let skill_file = record.path.join(SKILL_FILE);
     if !path_exists(&skill_file) {
-        write_if_changed(&skill_file, BUNDLED_SKILL.as_bytes())?;
+        write_if_changed(&skill_file, bundled_skill)?;
         record.installed_sha256 = bundled_sha256.into();
         report.updated.push(record.target);
         return Ok(());
@@ -497,7 +616,7 @@ fn sync_target(
     if current_sha256 == bundled_sha256 {
         record.installed_sha256 = bundled_sha256.into();
     } else if current_sha256 == record.installed_sha256 {
-        write_if_changed(&skill_file, BUNDLED_SKILL.as_bytes())?;
+        write_if_changed(&skill_file, bundled_skill)?;
         record.installed_sha256 = bundled_sha256.into();
         report.updated.push(record.target);
     } else {
@@ -515,21 +634,21 @@ fn target_state(
 ) -> &'static str {
     let Ok(()) = validate_managed_link(&record.path, managed_dir, false) else {
         return if path_exists(&record.path) {
-            "非托管"
+            text("unmanaged", "非托管")
         } else {
-            "缺失"
+            text("missing", "缺失")
         };
     };
     let Ok(contents) = fs::read(record.path.join(SKILL_FILE)) else {
-        return "缺失";
+        return text("missing", "缺失");
     };
     let current_sha256 = sha256(&contents);
     if current_sha256 == bundled_sha256 {
-        "最新"
+        text("current", "最新")
     } else if current_sha256 == manifest.bundled_sha256 {
-        "待同步"
+        text("pending sync", "待同步")
     } else {
-        "已修改"
+        text("modified", "已修改")
     }
 }
 
@@ -542,15 +661,15 @@ fn target_state(
 ) -> &'static str {
     let skill_file = record.path.join(SKILL_FILE);
     let Ok(contents) = fs::read(skill_file) else {
-        return "缺失";
+        return text("missing", "缺失");
     };
     let current_sha256 = sha256(&contents);
     if current_sha256 == bundled_sha256 {
-        "最新"
+        text("current", "最新")
     } else if current_sha256 == record.installed_sha256 {
-        "待同步"
+        text("pending sync", "待同步")
     } else {
-        "已修改"
+        text("modified", "已修改")
     }
 }
 
@@ -560,11 +679,18 @@ fn validate_managed_link(path: &Path, managed_dir: &Path, missing_ok: bool) -> R
         if missing_ok {
             return Ok(());
         }
-        bail!("{} 不存在", path.display());
+        bail!("{} {}", path.display(), text("does not exist", "不存在"));
     }
     let metadata = fs::symlink_metadata(path)?;
     if !metadata.file_type().is_symlink() {
-        bail!("{} 不再是 asvc 创建的软连接", path.display());
+        bail!(
+            "{} {}",
+            path.display(),
+            text(
+                "is no longer a symlink created by asvc",
+                "不再是 asvc 创建的软连接"
+            )
+        );
     }
     let target = fs::read_link(path)?;
     let target = if target.is_absolute() {
@@ -573,12 +699,21 @@ fn validate_managed_link(path: &Path, managed_dir: &Path, missing_ok: bool) -> R
         path.parent().unwrap_or_else(|| Path::new(".")).join(target)
     };
     if target != managed_dir {
-        bail!(
-            "{} 指向 {}，而不是 asvc 托管目录 {}",
-            path.display(),
-            target.display(),
-            managed_dir.display()
-        );
+        if locale() == Locale::English {
+            bail!(
+                "{} points to {}, not the asvc-managed directory {}",
+                path.display(),
+                target.display(),
+                managed_dir.display()
+            );
+        } else {
+            bail!(
+                "{} 指向 {}，而不是 asvc 托管目录 {}",
+                path.display(),
+                target.display(),
+                managed_dir.display()
+            );
+        }
     }
     Ok(())
 }
@@ -593,37 +728,113 @@ fn windows_copy_modified(record: &TargetRecord, bundled_sha256: &str) -> Result<
     Ok(current_sha256 != record.installed_sha256 && current_sha256 != bundled_sha256)
 }
 
+fn validate_skill_name(name: &str) -> Result<()> {
+    if name.is_empty() || name.len() > 64 {
+        bail!(
+            "{}",
+            text(
+                "skill name must contain 1–64 characters",
+                "skill 名称长度必须为 1–64 个字符"
+            )
+        );
+    }
+    if name.starts_with('-') || name.ends_with('-') {
+        bail!(
+            "{}",
+            text(
+                "skill name cannot start or end with a hyphen",
+                "skill 名称不能以连字符开头或结尾"
+            )
+        );
+    }
+    if !name.bytes().all(|character| {
+        character.is_ascii_lowercase() || character.is_ascii_digit() || character == b'-'
+    }) {
+        bail!(
+            "{}",
+            text(
+                "skill name may contain only lowercase letters, digits, and hyphens",
+                "skill 名称只能包含小写字母、数字和连字符"
+            )
+        );
+    }
+    Ok(())
+}
+
+fn render_skill(skill_name: &str) -> Result<String> {
+    validate_skill_name(skill_name)?;
+    let default_name = format!("name: {DEFAULT_SKILL_NAME}");
+    if !BUNDLED_SKILL.contains(&default_name) {
+        bail!(
+            "{} {DEFAULT_SKILL_NAME}",
+            text(
+                "bundled skill is missing its default name",
+                "内嵌 skill 缺少默认名称"
+            )
+        );
+    }
+    Ok(BUNDLED_SKILL.replacen(&default_name, &format!("name: {skill_name}"), 1))
+}
+
 fn validate_manifest(manifest: &InstallManifest) -> Result<()> {
     if manifest.schema_version != SCHEMA_VERSION {
-        bail!("不支持的 skill 安装清单版本: {}", manifest.schema_version);
+        bail!(
+            "{}: {}",
+            text(
+                "unsupported skill manifest version",
+                "不支持的 skill 安装清单版本"
+            ),
+            manifest.schema_version
+        );
     }
-    if manifest.skill_name != SKILL_NAME {
-        bail!("skill 安装清单名称无效: {}", manifest.skill_name);
-    }
+    validate_skill_name(&manifest.skill_name).with_context(|| {
+        format!(
+            "{}: {}",
+            text("invalid skill manifest name", "skill 安装清单名称无效"),
+            manifest.skill_name
+        )
+    })?;
     let mut targets = BTreeSet::new();
     for record in &manifest.targets {
         if !targets.insert(record.target) {
             bail!(
-                "skill 安装清单包含重复的 {} 目标",
+                "{} {}",
+                text(
+                    "skill manifest contains a duplicate target:",
+                    "skill 安装清单包含重复的目标："
+                ),
                 record.target.display_name()
             );
         }
-        let expected = record.target.install_dir()?;
+        let expected = record.target.install_dir(&manifest.skill_name)?;
         if record.path != expected {
-            bail!(
-                "{} skill 的托管路径应为 {}，清单中却是 {}",
-                record.target.display_name(),
-                expected.display(),
-                record.path.display()
-            );
+            if locale() == Locale::English {
+                bail!(
+                    "{} skill should be managed at {}, but the manifest contains {}",
+                    record.target.display_name(),
+                    expected.display(),
+                    record.path.display()
+                );
+            } else {
+                bail!(
+                    "{} skill 的托管路径应为 {}，清单中却是 {}",
+                    record.target.display_name(),
+                    expected.display(),
+                    record.path.display()
+                );
+            }
         }
     }
     Ok(())
 }
 
 fn load_manifest(path: &Path) -> Result<InstallManifest> {
-    serde_json::from_slice(&fs::read(path).with_context(|| format!("无法读取 {}", path.display()))?)
-        .with_context(|| format!("无法解析 {}", path.display()))
+    serde_json::from_slice(
+        &fs::read(path).with_context(|| {
+            format!("{} {}", text("failed to read", "无法读取"), path.display())
+        })?,
+    )
+    .with_context(|| format!("{} {}", text("failed to parse", "无法解析"), path.display()))
 }
 
 fn save_manifest(path: &Path, manifest: &InstallManifest) -> Result<()> {
@@ -642,7 +853,7 @@ fn unique_targets(targets: &[SkillTarget]) -> Vec<SkillTarget> {
 }
 
 fn managed_dir(paths: &Paths) -> PathBuf {
-    paths.home.join("skills").join(SKILL_NAME)
+    paths.home.join("skills").join(MANAGED_SKILL_ID)
 }
 
 fn managed_skill_path(paths: &Paths) -> PathBuf {
@@ -659,9 +870,15 @@ fn lock_path(paths: &Paths) -> PathBuf {
 
 fn with_lock<T>(paths: &Paths, action: impl FnOnce() -> Result<T>) -> Result<T> {
     let lock_path = lock_path(paths);
-    let parent = lock_path
-        .parent()
-        .ok_or_else(|| anyhow!("skill lock 路径无父目录"))?;
+    let parent = lock_path.parent().ok_or_else(|| {
+        anyhow!(
+            "{}",
+            text(
+                "skill lock path has no parent directory",
+                "skill lock 路径无父目录"
+            )
+        )
+    })?;
     fs::create_dir_all(parent)?;
     let lock = OpenOptions::new()
         .create(true)
@@ -684,9 +901,13 @@ fn write_if_changed(path: &Path, contents: &[u8]) -> Result<bool> {
 }
 
 fn write_atomic(path: &Path, contents: &[u8]) -> Result<()> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| anyhow!("{} 没有父目录", path.display()))?;
+    let parent = path.parent().ok_or_else(|| {
+        anyhow!(
+            "{} {}",
+            path.display(),
+            text("has no parent directory", "没有父目录")
+        )
+    })?;
     fs::create_dir_all(parent)?;
     let file_name = path
         .file_name()
@@ -709,7 +930,13 @@ fn write_atomic(path: &Path, contents: &[u8]) -> Result<()> {
     if result.is_err() {
         let _ = fs::remove_file(&temporary);
     }
-    result.with_context(|| format!("无法原子写入 {}", path.display()))
+    result.with_context(|| {
+        format!(
+            "{} {}",
+            text("failed to atomically write", "无法原子写入"),
+            path.display()
+        )
+    })
 }
 
 #[cfg(unix)]

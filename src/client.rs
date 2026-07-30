@@ -26,7 +26,7 @@ type PlatformStream = TcpStream;
 #[cfg(unix)]
 type PlatformStream = UnixStream;
 
-use crate::{model::Event, paths::Paths};
+use crate::{i18n::text, model::Event, paths::Paths};
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const BATCH_TIMEOUT: Duration = Duration::from_secs(5 * 60);
@@ -42,7 +42,9 @@ impl Client {
     pub async fn connect(paths: &Paths, auto_spawn: bool) -> Result<Self> {
         match connect_once(paths).await {
             Ok(stream) => Ok(Self::from_stream(stream)),
-            Err(error) if !auto_spawn => Err(error).context("daemon 未运行"),
+            Err(error) if !auto_spawn => {
+                Err(error).context(text("daemon is not running", "daemon 未运行"))
+            }
             Err(_) => {
                 spawn_daemon(paths)?;
                 let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
@@ -50,7 +52,10 @@ impl Client {
                     match connect_once(paths).await {
                         Ok(stream) => return Ok(Self::from_stream(stream)),
                         Err(error) if tokio::time::Instant::now() >= deadline => {
-                            return Err(error).context("等待 daemon 启动超时");
+                            return Err(error).context(text(
+                                "timed out waiting for daemon startup",
+                                "等待 daemon 启动超时",
+                            ));
                         }
                         Err(_) => sleep(Duration::from_millis(100)).await,
                     }
@@ -74,7 +79,12 @@ impl Client {
         self.next_id += 1;
         request
             .as_object_mut()
-            .ok_or_else(|| anyhow!("请求必须是 JSON object"))?
+            .ok_or_else(|| {
+                anyhow!(
+                    "{}",
+                    text("request must be a JSON object", "请求必须是 JSON object")
+                )
+            })?
             .insert("id".into(), json!(id));
         let request_type = request
             .get("type")
@@ -97,7 +107,7 @@ impl Client {
                     .lines
                     .next_line()
                     .await?
-                    .ok_or_else(|| anyhow!("连接已关闭"))?;
+                    .ok_or_else(|| anyhow!("{}", text("connection closed", "连接已关闭")))?;
                 let value: Value = match serde_json::from_str(&line) {
                     Ok(value) => value,
                     Err(_) => continue,
@@ -122,12 +132,18 @@ impl Client {
                     value
                         .get("error")
                         .and_then(Value::as_str)
-                        .unwrap_or("daemon 请求失败")
+                        .unwrap_or(text("daemon request failed", "daemon 请求失败"))
                 ));
             }
         })
         .await
-        .map_err(|_| anyhow!("请求超时（{request_type}）：daemon 无响应"))?
+        .map_err(|_| {
+            if crate::i18n::locale() == crate::i18n::Locale::English {
+                anyhow!("request timed out ({request_type}): daemon did not respond")
+            } else {
+                anyhow!("请求超时（{request_type}）：daemon 无响应")
+            }
+        })?
     }
 
     pub async fn next_event(&mut self) -> Result<Event> {
@@ -139,7 +155,7 @@ impl Client {
                 .lines
                 .next_line()
                 .await?
-                .ok_or_else(|| anyhow!("连接已关闭"))?;
+                .ok_or_else(|| anyhow!("{}", text("connection closed", "连接已关闭")))?;
             let value: Value = match serde_json::from_str(&line) {
                 Ok(value) => value,
                 Err(_) => continue,
@@ -178,7 +194,9 @@ fn spawn_daemon(paths: &Paths) -> Result<()> {
             Ok(())
         });
     }
-    let child = command.spawn().context("无法启动 daemon")?;
+    let child = command
+        .spawn()
+        .context(text("failed to start daemon", "无法启动 daemon"))?;
     // daemon owns its own session; dropping Child does not terminate it.
     drop(child);
     Ok(())
@@ -231,7 +249,8 @@ fn spawn_daemon(paths: &Paths) -> Result<()> {
         )
     };
     if created == 0 {
-        return Err(std::io::Error::last_os_error()).context("无法启动 daemon");
+        return Err(std::io::Error::last_os_error())
+            .context(text("failed to start daemon", "无法启动 daemon"));
     }
     unsafe {
         CloseHandle(process.hThread);
