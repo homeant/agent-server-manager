@@ -1,0 +1,47 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Asvc",
+  "version": "0.4.4",
+  "identifier": "com.homeant.asvc",
+  "build": {
+    "beforeDevCommand": "npm --prefix desktop run dev",
+    "beforeBuildCommand": "npm --prefix desktop run build",
+    "devUrl": "http://127.0.0.1:1421",
+    "frontendDist": "../desktop/dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Asvc · Local Services",
+        "width": 1320,
+        "height": 860,
+        "minWidth": 1120,
+        "minHeight": 760,
+        "resizable": true,
+        "fullscreen": false,
+        "center": true,
+        "decorations": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "backgroundColor": "#ffffff",
+        "shadow": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/asvc/app-32.png",
+      "icons/asvc/app-64.png",
+      "icons/asvc/app-128.png",
+      "icons/asvc/app-128@2x.png",
+      "icons/asvc/app.icns",
+      "icons/asvc/app.ico"
+    ]
+  }
+}

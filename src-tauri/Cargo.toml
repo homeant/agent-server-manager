@@ -1,0 +1,26 @@
+[package]
+name = "asvc-desktop"
+version = "0.4.4"
+description = "Native desktop control console for asvc"
+authors = ["homeant"]
+edition = "2024"
+license = "MIT"
+
+[lib]
+name = "asvc_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.6.3", features = [] }
+
+[dependencies]
+anyhow = "1.0"
+asvc = { path = ".." }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tauri = { version = "2.11.5", features = ["tray-icon", "image-png"] }
+tauri-plugin-single-instance = "2.4.3"
+tokio = { version = "1.48", features = ["rt-multi-thread"] }
+
+[features]
+custom-protocol = ["tauri/custom-protocol"]

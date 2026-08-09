@@ -12,7 +12,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::{
+use asvc::{
     client::Client,
     config::Config,
     i18n::{Locale, set_locale, text},
@@ -35,6 +35,9 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Open the native desktop control console
+    #[command(alias = "gui")]
+    Desktop,
     /// Start a service; -c also registers or updates its definition
     Start(StartArgs),
     /// Stop a service while preserving its definition
@@ -220,6 +223,10 @@ async fn execute(cli: Cli, paths: Paths) -> Result<i32> {
         report_skill_sync(&paths);
     }
     match cli.command {
+        Commands::Desktop => {
+            crate::desktop::run(paths)?;
+            Ok(0)
+        }
         Commands::List => {
             let mut client = Client::connect(&paths, true).await?;
             let services: Vec<ServiceInfo> = client.request(json!({ "type": "list" })).await?;
@@ -377,7 +384,7 @@ fn manage_skill(command: SkillCommand, paths: &Paths) -> Result<i32> {
                 .map(|target| target.display_name())
                 .collect::<Vec<_>>()
                 .join(", ");
-            let question = if crate::i18n::locale() == Locale::English {
+            let question = if asvc::i18n::locale() == Locale::English {
                 format!(
                     "Uninstall the {targets} skill? Back up any local changes you want to keep."
                 )
@@ -573,7 +580,7 @@ fn build_spec(name: &str, command: &str, args: &StartArgs) -> Result<ServiceSpec
 
 fn improve_unknown_service(error: anyhow::Error, name: &str) -> anyhow::Error {
     if error.to_string().contains("未知服务") || error.to_string().contains("unknown service") {
-        if crate::i18n::locale() == Locale::English {
+        if asvc::i18n::locale() == Locale::English {
             anyhow!(
                 "{error}\nThe service is not registered. On first start, provide a command with -c, for example: asvc start {name} -c \"npm run dev\""
             )
@@ -613,7 +620,7 @@ async fn start_foreground(paths: &Paths, name: &str, spec: Option<ServiceSpec>) 
     ) {
         return Ok(started.last_exit_code.unwrap_or(1));
     }
-    if crate::i18n::locale() == Locale::English {
+    if asvc::i18n::locale() == Locale::English {
         eprintln!("— {name} is running in the foreground (Ctrl-C stops the service) —");
     } else {
         eprintln!("— {name} 前台运行中（Ctrl-C 停止服务）—");
@@ -746,7 +753,7 @@ async fn remove(args: RemoveArgs, paths: &Paths) -> Result<i32> {
                 );
                 return Ok(0);
             }
-            if crate::i18n::locale() == Locale::English {
+            if asvc::i18n::locale() == Locale::English {
                 eprintln!(
                     "{} registered services will be stopped and removed.",
                     services.len()

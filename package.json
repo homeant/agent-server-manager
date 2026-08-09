@@ -26,6 +26,8 @@
   ],
   "scripts": {
     "build": "cargo build --release",
+    "desktop:dev": "npx --yes @tauri-apps/cli@2.11.4 dev",
+    "desktop:build": "npx --yes @tauri-apps/cli@2.11.4 build",
     "package:native": "node scripts/package-platform.mjs",
     "build:mac": "sh scripts/build-macos.sh",
     "build:standalone:mac": "npm run build:mac",

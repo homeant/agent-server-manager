@@ -3,6 +3,10 @@ dist/
 build/
 release/
 target/
+src-tauri/icons/android/
+src-tauri/icons/ios/
+src-tauri/icons/Square*.png
+src-tauri/icons/StoreLogo.png
 npm/asvc-*/bin/asvc
 npm/asvc-*/bin/asvc.exe
 *.log

@@ -1,12 +1,7 @@
 mod cli;
-mod client;
-mod config;
-mod daemon;
-mod i18n;
-mod model;
-mod paths;
-mod skill;
-mod supervisor;
+mod desktop;
+
+use asvc::{config, daemon, i18n, paths};
 
 use std::process::ExitCode;
 
@@ -29,6 +24,15 @@ async fn main() -> ExitCode {
             Ok(()) => ExitCode::SUCCESS,
             Err(error) => {
                 eprintln!("[asvc-daemon] {error:#}");
+                ExitCode::FAILURE
+            }
+        };
+    }
+    if std::env::args().nth(1).is_none() {
+        return match desktop::run(paths) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("Desktop error: {error:#}");
                 ExitCode::FAILURE
             }
         };

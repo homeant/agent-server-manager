@@ -132,6 +132,14 @@ cargo build --release --locked
 ## 命令一览（`asvc`）
 
 ```bash
+# 直接运行 asvc（无参数）打开桌面控制台
+asvc
+asvc desktop             # 显式打开桌面控制台（也可用 asvc gui）
+
+# Tauri + React 桌面端开发
+npm install --prefix desktop
+npm run desktop:dev
+
 # 启动即注册（前台，人用）：像直接敲原始命令，实时刷日志，Ctrl-C 停止服务
 asvc start web -c "npm run dev" --port 3000              # cwd 默认当前目录
 asvc start web                                           # 已注册过则可省略 -c
