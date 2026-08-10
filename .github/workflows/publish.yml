@@ -115,6 +115,14 @@ jobs:
         shell: bash
         run: npm run desktop:build:only -- --target "${{ matrix.tauri_target }}" --bundles "${{ matrix.desktop_bundles }}"
 
+      - name: Verify macOS app signature envelope
+        if: startsWith(matrix.platform, 'darwin-')
+        shell: bash
+        run: |
+          app=$(find "src-tauri/target/${{ matrix.tauri_target }}/release/bundle/macos" -maxdepth 1 -name '*.app' -print -quit)
+          test -n "$app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+
       - name: Package desktop artifacts and checksums
         shell: bash
         env:

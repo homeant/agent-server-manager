@@ -26,9 +26,12 @@ desktop frontend, and npm packages together.
 
 ## Installed command
 
-- macOS `.dmg`: contains `Asvc.app` and its same-version CLI sidecar. After dragging the app to
-  `Applications`, the Settings screen can explicitly install `/usr/local/bin/asvc`; macOS asks for
-  administrator authorization only when the destination is not writable.
+- macOS `.dmg`: contains `Asvc.app` and its same-version CLI sidecar. The app is ad-hoc signed so
+  its nested binaries and resources have a valid bundle seal even without an Apple Developer
+  certificate. After dragging the app to `Applications`, the Settings screen can explicitly install
+  `/usr/local/bin/asvc`; macOS asks for administrator authorization only when the destination is not
+  writable. Because the app is not notarized, macOS may still require a one-time approval in Privacy
+  & Security after a browser download.
 - Linux `.deb`: Tauri places the sidecar beside the application executable, so it is available as
   `/usr/bin/asvc`.
 - Windows NSIS: installs the sidecar beside the app and adds the current-user application directory

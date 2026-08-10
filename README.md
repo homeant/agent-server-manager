@@ -91,6 +91,10 @@ headless `asvc` CLI。需要在终端直接使用命令时，打开应用的“�
 用户未确认的情况下修改 PATH。Linux 的 `.deb` 会把 CLI 放到 `/usr/bin/asvc`，Windows 的
 NSIS 安装器会把当前用户的应用目录加入 PATH；便携式 AppImage 不修改宿主机 PATH。
 
+macOS 应用使用 ad-hoc 签名（不需要 Apple Developer 证书），用于完整封装应用资源，避免
+下载后的应用被 macOS 误报为“已损坏”。由于没有 Apple 公证，首次从浏览器下载后仍可能需要
+在“系统设置 → 隐私与安全性”中选择“仍要打开”。
+
 桌面构建需要先准备 headless CLI sidecar：
 
 ```bash
