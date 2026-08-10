@@ -97,7 +97,7 @@ function sha256(file) {
 const checksumFile = path.join(releaseRoot, `SHA256SUMS-${key}`);
 fs.writeFileSync(
   checksumFile,
-  `${sha256(archive)}  ${path.basename(archive)}\n${sha256(releaseBin)}  ${key}/${executable}\n`
+  `${sha256(archive)}  ${path.basename(archive)}\n`
 );
 
 console.log(`platform: ${key}`);

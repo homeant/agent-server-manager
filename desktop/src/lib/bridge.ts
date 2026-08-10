@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type {
   BatchResult,
+  CliInstallStatus,
   LogLine,
   ServiceInfo,
   ServiceSpec,
@@ -121,6 +122,16 @@ export const api = {
     call<LogLine[]>("get_logs", { name, lines }, mockLogs.filter((log) => log.name === name)),
   daemonStatus: () => call<boolean>("daemon_status", {}, true),
   setLocale: (locale: "en" | "zh-CN") => call<void>("set_locale", { locale }, undefined),
+  cliInstallStatus: () => call<CliInstallStatus>("cli_install_status", {}, {
+    supported: true,
+    installed: false,
+    path: "/usr/local/bin/asvc",
+  }),
+  installCli: () => call<CliInstallStatus>("install_cli", {}, {
+    supported: true,
+    installed: true,
+    path: "/usr/local/bin/asvc",
+  }),
   startDragging: () => nativeWindow ? nativeWindow.startDragging() : fake(undefined),
   toggleMaximize: () => nativeWindow ? nativeWindow.toggleMaximize() : fake(undefined),
   startService: (name: string) => call<ServiceInfo>("start_service", { name }, mockService(name, "running")),

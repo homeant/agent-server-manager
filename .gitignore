@@ -9,5 +9,6 @@ src-tauri/icons/Square*.png
 src-tauri/icons/StoreLogo.png
 npm/asvc-*/bin/asvc
 npm/asvc-*/bin/asvc.exe
+src-tauri/binaries/
 *.log
 .DS_Store

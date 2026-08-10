@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "./lib/bridge";
 import { getStoredLocale, resolveLocale, saveLocale, translate, type AppLocale, type LocalePreference, type TranslationKey } from "./lib/i18n";
-import type { LogLine, ServiceInfo, ServiceSpec, ServiceStatus } from "./lib/types";
+import type { CliInstallStatus, LogLine, ServiceInfo, ServiceSpec, ServiceStatus } from "./lib/types";
 
 type IconName =
   | "grid"
@@ -157,6 +157,8 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [daemonConnected, setDaemonConnected] = useState(false);
   const [busy, setBusy] = useState<string>();
+  const [cliBusy, setCliBusy] = useState(false);
+  const [cliStatus, setCliStatus] = useState<CliInstallStatus>();
   const [toast, setToast] = useState<string>();
   const [error, setError] = useState<string>();
   const [addOpen, setAddOpen] = useState(false);
@@ -196,8 +198,17 @@ function App() {
     }
   }
 
+  async function refreshCliStatus() {
+    try {
+      setCliStatus(await api.cliInstallStatus());
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    }
+  }
+
   useEffect(() => {
     void refreshServices();
+    void refreshCliStatus();
     const timer = window.setInterval(() => void refreshServices(true), 2500);
     return () => window.clearInterval(timer);
   }, []);
@@ -239,6 +250,19 @@ function App() {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
       setBusy(undefined);
+    }
+  }
+
+  async function installCli() {
+    setCliBusy(true);
+    setError(undefined);
+    try {
+      setCliStatus(await api.installCli());
+      setToast(t("cliInstalledToast"));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setCliBusy(false);
     }
   }
 
@@ -386,6 +410,16 @@ function App() {
               <div className="settings-menu-divider" />
               <div className="settings-menu-title">{t("daemonStatus")}</div>
               <div className="settings-daemon-row"><span className={`settings-daemon-dot ${daemonConnected ? "online" : "offline"}`} /><span><strong>{t("localDaemon")}</strong><small>{daemonConnected ? t("connected") : t("notConnected")}</small></span></div>
+              <div className="settings-menu-divider" />
+              <div className="settings-menu-title">{t("cliCommand")}</div>
+              <div className="settings-cli-row">
+                <span className={`settings-daemon-dot ${cliStatus?.installed ? "online" : "offline"}`} />
+                <span className="settings-cli-copy">
+                  <strong>{cliStatus?.installed ? t("cliInstalled") : t("cliCommand")}</strong>
+                  <small>{cliStatus?.supported ? t("cliInstallPath", { path: cliStatus.path }) : t("cliInstallUnsupported")}</small>
+                </span>
+              </div>
+              {cliStatus?.supported && <button className="settings-cli-install" disabled={cliBusy} onClick={() => void installCli()}>{cliStatus.installed ? t("updateCli") : t("installCli")}</button>}
             </div>}
           </div>
         </div>

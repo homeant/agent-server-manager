@@ -35,9 +35,6 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Open the native desktop control console
-    #[command(alias = "gui")]
-    Desktop,
     /// Start a service; -c also registers or updates its definition
     Start(StartArgs),
     /// Stop a service while preserving its definition
@@ -223,10 +220,6 @@ async fn execute(cli: Cli, paths: Paths) -> Result<i32> {
         report_skill_sync(&paths);
     }
     match cli.command {
-        Commands::Desktop => {
-            crate::desktop::run(paths)?;
-            Ok(0)
-        }
         Commands::List => {
             let mut client = Client::connect(&paths, true).await?;
             let services: Vec<ServiceInfo> = client.request(json!({ "type": "list" })).await?;

@@ -1,6 +1,6 @@
 [package]
 name = "asvc"
-version = "0.4.4"
+version = "0.4.5"
 edition = "2024"
 license = "MIT"
 description = "A shared local development service manager for humans and agents"

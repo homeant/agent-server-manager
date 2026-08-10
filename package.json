@@ -1,6 +1,6 @@
 {
   "name": "@homeant/asvc",
-  "version": "0.4.4",
+  "version": "0.4.5",
   "description": "统一管理本地开发服务的守护进程 + CLI，让人和 agent 通过同一套 asvc 命令启动/重启/关闭服务，避免端口冲突与重复启动。",
   "type": "module",
   "license": "MIT",
@@ -25,9 +25,14 @@
     "skill"
   ],
   "scripts": {
-    "build": "cargo build --release",
-    "desktop:dev": "npx --yes @tauri-apps/cli@2.11.4 dev",
-    "desktop:build": "npx --yes @tauri-apps/cli@2.11.4 build",
+    "build": "npm run build:headless",
+    "build:headless": "cargo build --release --locked",
+    "package:headless": "npm run build:headless && npm run package:native",
+    "desktop:dev": "npm run build:headless && npm run desktop:prepare && npx --yes @tauri-apps/cli@2.11.4 dev",
+    "desktop:prepare": "node scripts/prepare-desktop.mjs",
+    "desktop:build": "npm run build:headless && npm run desktop:prepare && npx --yes @tauri-apps/cli@2.11.4 build",
+    "desktop:build:only": "npx --yes @tauri-apps/cli@2.11.4 build",
+    "desktop:package": "node scripts/package-desktop.mjs",
     "package:native": "node scripts/package-platform.mjs",
     "build:mac": "sh scripts/build-macos.sh",
     "build:standalone:mac": "npm run build:mac",
@@ -44,10 +49,10 @@
     "node": ">=20"
   },
   "optionalDependencies": {
-    "@homeant/asvc-darwin-arm64": "0.4.4",
-    "@homeant/asvc-darwin-x64": "0.4.4",
-    "@homeant/asvc-linux-arm64": "0.4.4",
-    "@homeant/asvc-linux-x64": "0.4.4",
-    "@homeant/asvc-win32-x64": "0.4.4"
+    "@homeant/asvc-darwin-arm64": "0.4.5",
+    "@homeant/asvc-darwin-x64": "0.4.5",
+    "@homeant/asvc-linux-arm64": "0.4.5",
+    "@homeant/asvc-linux-x64": "0.4.5",
+    "@homeant/asvc-win32-x64": "0.4.5"
   }
 }

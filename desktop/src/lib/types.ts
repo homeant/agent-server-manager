@@ -48,3 +48,9 @@ export interface BatchResult {
   action: string;
   items: BatchItemResult[];
 }
+
+export interface CliInstallStatus {
+  supported: boolean;
+  installed: boolean;
+  path: string;
+}

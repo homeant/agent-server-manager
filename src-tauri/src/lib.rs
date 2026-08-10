@@ -104,6 +104,8 @@ pub fn run() -> i32 {
         .invoke_handler(tauri::generate_handler![
             commands::daemon_status,
             commands::set_locale,
+            commands::cli_install_status,
+            commands::install_cli,
             commands::get_services,
             commands::get_logs,
             commands::start_service,

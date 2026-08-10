@@ -51,10 +51,11 @@ brew install homeant/tap/asvc
 GitHub Release 原生二进制，并校验 SHA-256。手动推送 `v*` tag 后，发布工作流会在 Release
 成功创建后同步更新 [`homeant/homebrew-tap`](https://github.com/homeant/homebrew-tap)。
 
-### GitHub Release 原生文件
+### GitHub Release 原生文件（无桌面 CLI）
 
-asvc 核心使用 Rust，CLI 和 daemon 是同一个原生可执行文件，不依赖客户机器上的 Node、asdf、
-nvm、fnm 或 Volta。每个 tag 发布以下产物：
+`asvc` CLI 和 daemon 是同一个 headless Rust 原生可执行文件，不依赖客户机器上的 Node、
+asdf、nvm、fnm 或 Volta。它只负责命令行和 daemon，不包含 Tauri/WebView 桌面依赖。每个
+tag 发布以下产物：
 
 | 系统 | 架构 | Release 资产 |
 | --- | --- | --- |
@@ -74,6 +75,33 @@ cargo test --locked
 cargo build --release --locked
 node scripts/package-platform.mjs
 ```
+
+也可以直接使用 headless 打包入口：
+
+```bash
+npm run package:headless
+```
+
+### 桌面版
+
+桌面版是独立的 Tauri 应用，不通过 `asvc desktop` 启动，也不改变 headless CLI 的职责。
+macOS 桌面版以 `.dmg` 发布，拖入 `Applications` 后即可使用；应用包内始终携带同版本的
+headless `asvc` CLI。需要在终端直接使用命令时，打开应用的“设置”，点击“安装到 PATH”，
+应用会把 CLI 安装到 `/usr/local/bin/asvc`，必要时弹出 macOS 授权对话框。DMG 本身不会在
+用户未确认的情况下修改 PATH。Linux 的 `.deb` 会把 CLI 放到 `/usr/bin/asvc`，Windows 的
+NSIS 安装器会把当前用户的应用目录加入 PATH；便携式 AppImage 不修改宿主机 PATH。
+
+桌面构建需要先准备 headless CLI sidecar：
+
+```bash
+npm install --prefix desktop
+npm run desktop:build
+```
+
+Release 中的桌面资产以 `asvc-desktop-v<version>-<platform>-...` 命名；它们和 headless
+CLI 资产共用同一个 `SHA256SUMS`。
+
+构建职责和各平台安装行为见 [`docs/asvc-packaging.md`](docs/asvc-packaging.md)。
 
 ### npm 安装
 
@@ -132,10 +160,6 @@ cargo build --release --locked
 ## 命令一览（`asvc`）
 
 ```bash
-# 直接运行 asvc（无参数）打开桌面控制台
-asvc
-asvc desktop             # 显式打开桌面控制台（也可用 asvc gui）
-
 # Tauri + React 桌面端开发
 npm install --prefix desktop
 npm run desktop:dev

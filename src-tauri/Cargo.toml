@@ -1,6 +1,6 @@
 [package]
 name = "asvc-desktop"
-version = "0.4.4"
+version = "0.4.5"
 description = "Native desktop control console for asvc"
 authors = ["homeant"]
 edition = "2024"

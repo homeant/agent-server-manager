@@ -3,5 +3,5 @@ set -eu
 
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$repo_root"
-cargo build --release
+cargo build --release --locked
 node scripts/package-platform.mjs

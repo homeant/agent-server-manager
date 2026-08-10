@@ -2250,7 +2250,7 @@ body,
   right: 0;
   bottom: calc(100% + 8px);
   z-index: 10;
-  width: 184px;
+  width: 236px;
   padding: 7px;
   border: 1px solid var(--line);
   border-radius: 10px;
@@ -2335,6 +2335,57 @@ body,
 .settings-daemon-row small {
   color: #8e8e8e;
   font-size: 10px;
+}
+
+.settings-cli-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 5px 9px 3px;
+}
+
+.settings-cli-copy {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.settings-cli-copy strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-cli-copy small {
+  overflow: hidden;
+  color: #8e8e8e;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-cli-install {
+  display: block;
+  width: calc(100% - 18px);
+  min-height: 29px;
+  margin: 5px 9px 7px;
+  padding: 0 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  color: var(--ink);
+  background: #f7f7f8;
+  font-size: 10px;
+  text-align: center;
+}
+
+.settings-cli-install:hover:not(:disabled) {
+  border-color: var(--green);
+  color: var(--green);
+  background: #f0fbf7;
 }
 
 /* Overview also stays inside the viewport; the status panel owns its remaining space. */
