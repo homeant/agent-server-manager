@@ -1,7 +1,10 @@
-use std::path::Path;
-
 #[cfg(target_os = "macos")]
-use std::{fs, io, os::unix::fs::PermissionsExt, path::PathBuf, process::Command};
+use std::{
+    fs, io,
+    os::unix::fs::PermissionsExt,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 use asvc::{
     client::Client,

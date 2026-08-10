@@ -4,6 +4,7 @@
 
 ${StrStr}
 ${StrRep}
+${un.StrRep}
 
 ; The desktop installer owns the GUI, while the headless CLI sidecar is installed next to it.
 ; Add that directory to the current user's PATH so a fresh terminal can run `asvc` directly.
@@ -22,9 +23,13 @@ ${StrRep}
 
 !macro NSIS_HOOK_POSTUNINSTALL
   ReadRegStr $0 HKCU "Environment" "Path"
-  ${StrRep} $1 $0 "$INSTDIR;" ""
-  ${If} $1 == $0
-    ${StrRep} $1 $0 ";$INSTDIR" ""
+  ${If} $0 == "$INSTDIR"
+    StrCpy $1 ""
+  ${Else}
+    ${un.StrRep} $1 $0 "$INSTDIR;" ""
+    ${If} $1 == $0
+      ${un.StrRep} $1 $0 ";$INSTDIR" ""
+    ${EndIf}
   ${EndIf}
   WriteRegExpandStr HKCU "Environment" "Path" $1
   SendMessage ${HWND_BROADCAST} ${WM_SETTINGCHANGE} 0 "STR:Environment" /TIMEOUT=5000
