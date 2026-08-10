@@ -119,9 +119,13 @@ jobs:
         if: startsWith(matrix.platform, 'darwin-')
         shell: bash
         run: |
-          app=$(find "src-tauri/target/${{ matrix.tauri_target }}/release/bundle/macos" -maxdepth 1 -name '*.app' -print -quit)
-          test -n "$app"
-          codesign --verify --deep --strict --verbose=2 "$app"
+          dmg=$(find "src-tauri/target/${{ matrix.tauri_target }}/release/bundle/dmg" -maxdepth 1 -name '*.dmg' -print -quit)
+          test -n "$dmg"
+          mount_output=$(hdiutil attach -nobrowse -readonly -noverify "$dmg")
+          mount_point=$(printf '%s\n' "$mount_output" | awk '/\/Volumes\// {print substr($0, index($0, "/Volumes/")); exit}')
+          test -n "$mount_point"
+          trap 'hdiutil detach "$mount_point" -quiet || true' EXIT
+          codesign --verify --deep --strict --verbose=2 "$mount_point/Asvc.app"
 
       - name: Package desktop artifacts and checksums
         shell: bash
