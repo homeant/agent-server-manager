@@ -23,6 +23,7 @@ use tokio::{
 
 use crate::{
     i18n::text,
+    log_sanitize::sanitize_log_line,
     model::{
         BatchItemResult, BatchResult, Event, LogLine, LogStream, ServiceInfo, ServiceSpec,
         ServiceStatus,
@@ -680,7 +681,7 @@ impl Supervisor {
         let entry = LogLine {
             name: name.to_string(),
             stream,
-            line,
+            line: sanitize_log_line(&line),
             ts: now_ms(),
         };
         {

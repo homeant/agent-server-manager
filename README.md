@@ -350,6 +350,8 @@ asvc 托管且未经修改的 skill。
   `taskkill /T`，超时后增加 `/F`。
 - 服务环境：注册定义时保存调用者 PATH，daemon 继承其余通用环境，服务 `--env` 最后覆盖；
   核心不包含任何 Node 版本管理器适配。
+- 日志在进入内存环、事件流和落盘文件前统一移除 ANSI 与终端控制序列，Desktop 和 CLI
+  因而显示相同的干净文本，同时保留正常 Unicode 与制表符。
 - 启动后 1s 稳定窗口：进程在窗口内退出即判失败，返回真实状态而非乐观 running。
 - Rust + Tokio；macOS、Linux、Windows 每个平台产物都是单个原生可执行文件。
 ```
