@@ -192,7 +192,10 @@ async fn handle_request(
     shutdown: Arc<Notify>,
 ) -> Result<Value> {
     match request {
-        Request::Ping { .. } => value(json!({ "pong": true })),
+        Request::Ping { .. } => value(json!({
+            "pong": true,
+            "version": env!("CARGO_PKG_VERSION")
+        })),
         Request::List { .. } => value(supervisor.list().await),
         Request::Info { name, .. } => value(
             supervisor

@@ -31,6 +31,10 @@ Prefer the native standalone executable in Codex and other non-login environment
 the Rust CLI and daemon and does not require Node or a version manager. The npm package is a
 supported installation channel, but its small launcher still lives in the selected npm prefix.
 
+Treat standalone CLI and Asvc Desktop as alternate installation modes. Desktop includes and owns
+its matching CLI. Do not install a Homebrew/npm copy alongside Desktop or choose arbitrarily when
+multiple `asvc` commands are present in PATH; let the Desktop migration resolve the conflict.
+
 Supported native targets are macOS arm64/x64, Linux arm64/x64, and Windows x64. On macOS,
 Homebrew is the preferred installation channel:
 
@@ -153,6 +157,7 @@ asvc start api -c "go run ." --cwd /path/api --env KEY=VAL -d
 asvc start web -d
 
 asvc list
+asvc status web
 asvc info web             # `show` is an alias
 asvc logs web
 asvc logs web -n 500
@@ -177,6 +182,8 @@ Current command shapes:
 - `restart <NAME>`: require exactly one service name; no bulk form exists.
 - `logs <NAME>`: accept `-n/--lines <LINES>` (default 200) and `-f/--follow`.
 - `list`: show a compact overview of all services.
+- `status <NAME>`: require exactly one service name; show its compact runtime status and return
+  non-zero when it is not running or starting. It is not an alias for `list`.
 - `info <NAME>` (alias `show`): show one service's complete status, resource usage, launch
   configuration, and environment overrides.
 - `rm [NAME]`: accept `-a/--all` and `-y/--yes`.
@@ -199,16 +206,27 @@ remain on disk.
 
 After start or restart, the daemon waits about one second to catch immediate failures:
 
-- Exit code 0 means the service stayed running.
+- Exit code 0 means the service stayed running. Treat that as the final result; do not run
+  `status`, `list`, logs, Compose, port, or process checks afterward unless the user explicitly
+  asks for additional verification.
 - A non-zero exit code means it failed. Read the printed log tail and fix the cause.
 - `EADDRINUSE` means the port is already occupied; free it or choose another port before retrying.
 
-Do not assume success after a non-zero result. For later diagnosis use:
+Do not probe command names by guessing. Use `status <NAME>` for a later check of one service and
+`list` only when the user asks for an overview. Do not use Docker Compose status as a substitute
+for asvc status; inspect Compose only when the user requests it or asvc evidence points to a
+container dependency.
+
+Do not assume success after a non-zero result. The command already prints a recent log tail. If
+that is insufficient, continue diagnosis within asvc:
 
 ```bash
-asvc list
+asvc status <name>
 asvc info <name>
 asvc logs <name> -n 200
 ```
+
+Report the outcome, not recoverable command-discovery attempts. After a successful restart, a
+concise report such as `<name> restarted and is running (pid <pid>)` is sufficient.
 
 Leave services running for the human unless the task genuinely requires stopping or removing them.

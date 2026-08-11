@@ -52,6 +52,8 @@ pub fn run() -> i32 {
     }
 
     let builder = tauri::Builder::default()
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             show_main_window(app);
         }))
@@ -103,9 +105,11 @@ pub fn run() -> i32 {
         })
         .invoke_handler(tauri::generate_handler![
             commands::daemon_status,
+            commands::migrate_daemon,
             commands::set_locale,
             commands::cli_install_status,
             commands::install_cli,
+            commands::quit_app,
             commands::get_services,
             commands::get_logs,
             commands::start_service,

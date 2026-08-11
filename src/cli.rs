@@ -46,6 +46,8 @@ enum Commands {
     /// List services and status
     #[command(alias = "ls")]
     List,
+    /// Show the runtime status of one service
+    Status { name: String },
     /// Show complete details for one service
     #[command(alias = "show")]
     Info { name: String },
@@ -226,6 +228,13 @@ async fn execute(cli: Cli, paths: Paths) -> Result<i32> {
             print_list(&services);
             Ok(0)
         }
+        Commands::Status { name } => {
+            let mut client = Client::connect(&paths, true).await?;
+            let info: ServiceInfo = client
+                .request(json!({ "type": "info", "name": name }))
+                .await?;
+            Ok(print_status(&info))
+        }
         Commands::Info { name } => {
             let mut client = Client::connect(&paths, true).await?;
             let info: ServiceInfo = client
@@ -240,7 +249,7 @@ async fn execute(cli: Cli, paths: Paths) -> Result<i32> {
             let info: ServiceInfo = client
                 .request(json!({ "type": "restart", "name": name }))
                 .await?;
-            report_start(&mut client, info, text("restarted", "重启")).await
+            report_start(&mut client, info, text("restarted", "重启"), true).await
         }
         Commands::Stop(args) => stop(args, &paths).await,
         Commands::Start(args) => start(args, &paths).await,
@@ -527,7 +536,7 @@ async fn start(args: StartArgs, paths: &Paths) -> Result<i32> {
                 .await
         };
         let info = info.map_err(|error| improve_unknown_service(error, &name))?;
-        return report_start(&mut client, info, text("started", "启动")).await;
+        return report_start(&mut client, info, text("started", "启动"), false).await;
     }
     start_foreground(paths, &name, spec).await
 }
@@ -783,8 +792,16 @@ async fn daemon(command: DaemonCommand, paths: &Paths) -> Result<i32> {
     match command {
         DaemonCommand::Status => match Client::connect(paths, false).await {
             Ok(mut client) => {
-                let _: serde_json::Value = client.request(json!({ "type": "ping" })).await?;
-                println!("{}", text("daemon is running", "daemon 运行中"));
+                let ping: serde_json::Value = client.request(json!({ "type": "ping" })).await?;
+                if let Some(version) = ping.get("version").and_then(serde_json::Value::as_str) {
+                    println!(
+                        "{} ({})",
+                        text("daemon is running", "daemon 运行中"),
+                        version
+                    );
+                } else {
+                    println!("{}", text("daemon is running", "daemon 运行中"));
+                }
                 Ok(0)
             }
             Err(_) => {
@@ -812,14 +829,36 @@ async fn daemon(command: DaemonCommand, paths: &Paths) -> Result<i32> {
     }
 }
 
-async fn report_start(client: &mut Client, info: ServiceInfo, verb: &str) -> Result<i32> {
-    if matches!(
-        info.status,
-        ServiceStatus::Running | ServiceStatus::Starting
-    ) {
+async fn report_start(
+    client: &mut Client,
+    info: ServiceInfo,
+    verb: &str,
+    startup_verified: bool,
+) -> Result<i32> {
+    let succeeded = info.status == ServiceStatus::Running
+        || (!startup_verified && info.status == ServiceStatus::Starting);
+    if succeeded {
+        let verification =
+            startup_verified.then(|| text("startup verified for 1s", "已验证启动后持续运行 1 秒"));
         if let Some(pid) = info.pid {
+            if let Some(verification) = verification {
+                println!(
+                    "{} {} → {} (pid {pid}, {verification})",
+                    info.spec.name,
+                    verb,
+                    info.status.as_str()
+                );
+            } else {
+                println!(
+                    "{} {} → {} (pid {pid})",
+                    info.spec.name,
+                    verb,
+                    info.status.as_str()
+                );
+            }
+        } else if let Some(verification) = verification {
             println!(
-                "{} {} → {} (pid {pid})",
+                "{} {} → {} ({verification})",
                 info.spec.name,
                 verb,
                 info.status.as_str()
@@ -860,6 +899,48 @@ async fn report_start(client: &mut Client, info: ServiceInfo, verb: &str) -> Res
         );
     }
     Ok(1)
+}
+
+fn print_status(service: &ServiceInfo) -> i32 {
+    let mut details = Vec::new();
+    if let Some(pid) = service.pid {
+        details.push(format!("pid {pid}"));
+    }
+    if matches!(
+        service.status,
+        ServiceStatus::Running | ServiceStatus::Starting
+    ) {
+        details.push(format!(
+            "{} {}",
+            text("uptime", "运行时长"),
+            format_uptime(service.started_at)
+        ));
+    } else if let Some(code) = service.last_exit_code {
+        details.push(format!("exit {code}"));
+    }
+    if let Some(port) = service.spec.port {
+        details.push(format!("port {port}"));
+    }
+
+    if details.is_empty() {
+        println!("{} → {}", service.spec.name, service.status.as_str());
+    } else {
+        println!(
+            "{} → {} ({})",
+            service.spec.name,
+            service.status.as_str(),
+            details.join(", ")
+        );
+    }
+
+    if matches!(
+        service.status,
+        ServiceStatus::Running | ServiceStatus::Starting
+    ) {
+        0
+    } else {
+        1
+    }
 }
 
 fn print_list(services: &[ServiceInfo]) {
@@ -1159,7 +1240,7 @@ fn completion(shell: Shell) -> &'static str {
 
 const ZSH_COMPLETION: &str = r#"_asvc() {
   local -a commands
-  commands=('start:start a service' 'stop:stop a service' 'restart:restart a service' 'logs:read service logs' 'list:list services' 'info:show service details' 'rm:remove a service' 'daemon:manage the daemon' 'skill:manage the agent skill' 'config:manage configuration')
+  commands=('start:start a service' 'stop:stop a service' 'restart:restart a service' 'logs:read service logs' 'list:list services' 'status:show one service status' 'info:show service details' 'rm:remove a service' 'daemon:manage the daemon' 'skill:manage the agent skill' 'config:manage configuration')
   if (( CURRENT == 2 )); then _describe 'command' commands; return; fi
   local cmd=${words[2]}
   if (( CURRENT == 3 )) && [[ $cmd == skill ]]; then
@@ -1182,7 +1263,7 @@ const ZSH_COMPLETION: &str = r#"_asvc() {
     _values 'locale' en zh-CN
     return
   fi
-  if (( CURRENT == 3 )) && [[ $cmd == start || $cmd == stop || $cmd == restart || $cmd == logs || $cmd == info || $cmd == show || $cmd == rm || $cmd == remove ]]; then
+  if (( CURRENT == 3 )) && [[ $cmd == start || $cmd == stop || $cmd == restart || $cmd == logs || $cmd == status || $cmd == info || $cmd == show || $cmd == rm || $cmd == remove ]]; then
     local -a services
     services=( ${(f)"$(command asvc __complete services 2>/dev/null)"} )
     [[ $cmd == start || $cmd == stop || $cmd == rm || $cmd == remove ]] && services+=(--all)
@@ -1194,7 +1275,7 @@ compdef _asvc asvc"#;
 const BASH_COMPLETION: &str = r#"_asvc() {
   local cur="${COMP_WORDS[COMP_CWORD]}"
   if [ "$COMP_CWORD" -eq 1 ]; then
-    COMPREPLY=( $(compgen -W "start stop restart logs list ls info show rm daemon skill config completion" -- "$cur") )
+    COMPREPLY=( $(compgen -W "start stop restart logs list ls status info show rm daemon skill config completion" -- "$cur") )
     return
   fi
   local cmd="${COMP_WORDS[1]}"
@@ -1202,7 +1283,7 @@ const BASH_COMPLETION: &str = r#"_asvc() {
     case "$cmd" in
       start|stop|rm|remove)
         COMPREPLY=( $(compgen -W "$(asvc __complete services 2>/dev/null) --all" -- "$cur") ) ;;
-      restart|logs|info|show)
+      restart|logs|status|info|show)
         COMPREPLY=( $(compgen -W "$(asvc __complete services 2>/dev/null)" -- "$cur") ) ;;
       daemon) COMPREPLY=( $(compgen -W "status stop" -- "$cur") ) ;;
       skill) COMPREPLY=( $(compgen -W "install status uninstall" -- "$cur") ) ;;

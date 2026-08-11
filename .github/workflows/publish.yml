@@ -29,12 +29,12 @@ jobs:
             runner: ubuntu-24.04-arm
             rust_target: aarch64-unknown-linux-musl
             tauri_target: aarch64-unknown-linux-gnu
-            desktop_bundles: deb,appimage
+            desktop_bundles: deb
           - platform: linux-x64
             runner: ubuntu-24.04
             rust_target: x86_64-unknown-linux-musl
             tauri_target: x86_64-unknown-linux-gnu
-            desktop_bundles: deb,appimage
+            desktop_bundles: deb
           - platform: win32-x64
             runner: windows-2025
             rust_target: ""
@@ -43,6 +43,8 @@ jobs:
     runs-on: ${{ matrix.runner }}
     env:
       MACOSX_DEPLOYMENT_TARGET: "11.0"
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
     steps:
       - uses: actions/checkout@v6
 
@@ -113,7 +115,7 @@ jobs:
 
       - name: Build desktop installer
         shell: bash
-        run: npm run desktop:build:only -- --target "${{ matrix.tauri_target }}" --bundles "${{ matrix.desktop_bundles }}"
+        run: npm run desktop:build:only -- --target "${{ matrix.tauri_target }}" --bundles "${{ matrix.desktop_bundles }}" --config src-tauri/tauri.release.conf.json
 
       - name: Verify macOS app signature envelope
         if: startsWith(matrix.platform, 'darwin-')
@@ -183,6 +185,11 @@ jobs:
           node scripts/verify-npm-packages.mjs
           cat release/SHA256SUMS-* | sort > release/SHA256SUMS
 
+      - name: Generate signed desktop updater manifest
+        env:
+          ASVC_RELEASE_DATE: ${{ github.event.head_commit.timestamp }}
+        run: node scripts/generate-updater-manifest.mjs
+
       - name: Publish native npm packages
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -212,7 +219,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          assets=(release/asvc-v*.tar.gz release/asvc-v*.zip release/asvc-desktop-v* release/SHA256SUMS)
+          assets=(release/asvc-v*.tar.gz release/asvc-v*.zip release/asvc-desktop-v* release/SHA256SUMS release/latest.json)
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --clobber
           else

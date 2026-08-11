@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "./lib/bridge";
 import { getStoredLocale, resolveLocale, saveLocale, translate, type AppLocale, type LocalePreference, type TranslationKey } from "./lib/i18n";
-import type { CliInstallStatus, LogLine, ServiceInfo, ServiceSpec, ServiceStatus } from "./lib/types";
+import type { AppUpdateInfo, AppUpdateProgress, CliInstallStatus, DaemonRuntimeStatus, LogLine, ServiceInfo, ServiceSpec, ServiceStatus } from "./lib/types";
 
 type IconName =
   | "grid"
@@ -18,7 +18,8 @@ type IconName =
   | "search"
   | "external"
   | "info"
-  | "check";
+  | "check"
+  | "download";
 
 function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
   const common = {
@@ -64,6 +65,8 @@ function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
       return <svg {...common}><circle cx="12" cy="12" r="8.5" /><path d="M12 10.5v5M12 7.5h.01" /></svg>;
     case "check":
       return <svg {...common}><path d="m5 12 4 4L19 6" /></svg>;
+    case "download":
+      return <svg {...common}><path d="M12 4v10M8 10l4 4 4-4" /><path d="M5 18h14" /></svg>;
   }
 }
 
@@ -156,9 +159,21 @@ function App() {
   const [logs, setLogs] = useState<LogLine[]>([]);
   const [loading, setLoading] = useState(true);
   const [daemonConnected, setDaemonConnected] = useState(false);
+  const [daemonChecked, setDaemonChecked] = useState(false);
+  const [daemonGateOpen, setDaemonGateOpen] = useState(false);
+  const [daemonBusy, setDaemonBusy] = useState(false);
+  const [daemonRuntime, setDaemonRuntime] = useState<DaemonRuntimeStatus>();
   const [busy, setBusy] = useState<string>();
   const [cliBusy, setCliBusy] = useState(false);
+  const [cliChecked, setCliChecked] = useState(false);
+  const [cliGateOpen, setCliGateOpen] = useState(false);
   const [cliStatus, setCliStatus] = useState<CliInstallStatus>();
+  const [updateInfo, setUpdateInfo] = useState<AppUpdateInfo>();
+  const [updateOpen, setUpdateOpen] = useState(false);
+  const [updateChecked, setUpdateChecked] = useState(false);
+  const [updateChecking, setUpdateChecking] = useState(false);
+  const [updateBusy, setUpdateBusy] = useState(false);
+  const [updateProgress, setUpdateProgress] = useState<AppUpdateProgress>();
   const [toast, setToast] = useState<string>();
   const [error, setError] = useState<string>();
   const [addOpen, setAddOpen] = useState(false);
@@ -177,9 +192,9 @@ function App() {
   async function refreshServices(quiet = false) {
     if (!quiet) setLoading(true);
     try {
-      const [nextServices, connected] = await Promise.all([api.getServices(), api.daemonStatus()]);
+      const nextServices = await api.getServices();
       setServices(nextServices);
-      setDaemonConnected(connected);
+      setDaemonConnected(true);
       setSelectedName((current) => current && nextServices.some((service) => service.name === current) ? current : undefined);
       setError(undefined);
     } catch (reason) {
@@ -200,18 +215,77 @@ function App() {
 
   async function refreshCliStatus() {
     try {
-      setCliStatus(await api.cliInstallStatus());
+      const status = await api.cliInstallStatus();
+      setCliStatus(status);
+      setCliGateOpen(status.supported && status.state !== "current");
+      return status;
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
+      return undefined;
+    } finally {
+      setCliChecked(true);
+    }
+  }
+
+  async function refreshDaemonRuntime() {
+    try {
+      const status = await api.daemonStatus();
+      setDaemonRuntime(status);
+      setDaemonConnected(status.connected);
+      setDaemonGateOpen(status.connected && !status.current);
+      return status;
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+      return undefined;
+    } finally {
+      setDaemonChecked(true);
+    }
+  }
+
+  async function checkForUpdates(showResult = false) {
+    if (!api.autoUpdateSupported) {
+      if (showResult) setToast(t("updateManagedByPackage"));
+      setUpdateChecked(true);
+      return;
+    }
+    if (showResult) {
+      setUpdateChecking(true);
+      setError(undefined);
+    }
+    try {
+      const update = await api.checkForUpdate();
+      setUpdateInfo(update);
+      setUpdateOpen(Boolean(update));
+      if (!update && showResult) setToast(t("appUpToDate"));
+    } catch (reason) {
+      if (showResult) setError(reason instanceof Error ? reason.message : String(reason));
+      else console.warn("Unable to check for an Asvc update", reason);
+    } finally {
+      setUpdateChecking(false);
+      setUpdateChecked(true);
     }
   }
 
   useEffect(() => {
-    void refreshServices();
     void refreshCliStatus();
+  }, []);
+
+  useEffect(() => {
+    if (!cliChecked || cliGateOpen) return;
+    void refreshDaemonRuntime();
+  }, [cliChecked, cliGateOpen]);
+
+  useEffect(() => {
+    if (!daemonChecked || daemonGateOpen) return;
+    void refreshServices();
     const timer = window.setInterval(() => void refreshServices(true), 2500);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [daemonChecked, daemonGateOpen]);
+
+  useEffect(() => {
+    if (!daemonChecked || daemonGateOpen || !cliChecked || cliGateOpen || updateChecked) return;
+    void checkForUpdates();
+  }, [cliChecked, cliGateOpen, daemonChecked, daemonGateOpen, updateChecked]);
 
   useEffect(() => {
     if (!selectedName) {
@@ -257,12 +331,45 @@ function App() {
     setCliBusy(true);
     setError(undefined);
     try {
-      setCliStatus(await api.installCli());
+      const status = await api.installCli();
+      setCliStatus(status);
+      setCliGateOpen(status.state !== "current");
       setToast(t("cliInstalledToast"));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
       setCliBusy(false);
+    }
+  }
+
+  async function migrateDaemon() {
+    setDaemonBusy(true);
+    setError(undefined);
+    try {
+      const status = await api.migrateDaemon();
+      setDaemonRuntime(status);
+      setDaemonConnected(status.connected);
+      setDaemonGateOpen(!status.current);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+      await refreshDaemonRuntime();
+    } finally {
+      setDaemonBusy(false);
+    }
+  }
+
+  async function installAppUpdate() {
+    setUpdateBusy(true);
+    setUpdateProgress({ downloaded: 0 });
+    setError(undefined);
+    try {
+      await api.installUpdate(setUpdateProgress);
+      setUpdateOpen(false);
+      setToast(t("updateInstalled"));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setUpdateBusy(false);
     }
   }
 
@@ -339,6 +446,33 @@ function App() {
     setCopyMenu(undefined);
   }
 
+  const cliSourceKey: Record<CliInstallStatus["source"], TranslationKey> = {
+    none: "cliSourceNone",
+    desktop: "cliSourceDesktop",
+    homebrew: "cliSourceHomebrew",
+    npm: "cliSourceNpm",
+    unknown: "cliSourceUnknown",
+  };
+  const cliDialogTitle = cliStatus?.state === "missing"
+    ? t("cliMissingTitle")
+    : cliStatus?.state === "conflict"
+      ? t("cliConflictTitle")
+      : cliStatus?.source !== "desktop"
+        ? t("cliMigrateTitle")
+        : t("cliOutdatedTitle");
+  const cliDialogDescription = cliStatus?.state === "missing"
+    ? t("cliMissingDescription")
+    : cliStatus?.state === "conflict"
+      ? t("cliConflictDescription")
+      : cliStatus?.source !== "desktop"
+        ? t("cliMigrateDescription")
+        : t("cliOutdatedDescription");
+  const cliInstallLabel = cliStatus?.source === "homebrew" || cliStatus?.source === "npm"
+    ? t("migrateAndContinue")
+    : cliStatus?.state === "missing"
+      ? t("installAndContinue")
+      : t("updateAndContinue");
+
   return (
     <div className="app-shell" onMouseDown={() => setCopyMenu(undefined)} onContextMenu={(event) => {
       const selection = window.getSelection()?.toString() ?? "";
@@ -379,7 +513,6 @@ function App() {
       </div>
       {copyMenu && <div className="copy-context-menu" role="menu" style={{ left: copyMenu.x, top: copyMenu.y }} onMouseDown={(event) => event.stopPropagation()}><button type="button" role="menuitem" onClick={() => void copySelectedText(copyMenu.text)}>{t("copy")}</button></div>}
       <aside className="sidebar">
-        <div className="sidebar-section-label">{t("workspace")}</div>
         <nav className="primary-nav" aria-label={t("workspace")}>
           <button className={`nav-item ${view === "overview" ? "active" : ""}`} onClick={showOverview}><Icon name="grid" size={17} /><span>{t("overview")}</span><span className="nav-kbd">⌘ 1</span></button>
         </nav>
@@ -397,30 +530,20 @@ function App() {
         </div>
 
         <div className="sidebar-footer">
-          <div className="sidebar-settings">
-            <button className={`sidebar-settings-button ${settingsOpen ? "open" : ""}`} onClick={() => setSettingsOpen((open) => !open)} aria-haspopup="menu" aria-expanded={settingsOpen}>
-              <Icon name="sliders" size={15} /><span>{t("settings")}</span><span className="sidebar-settings-current">{localePreference === "auto" ? t("auto") : localePreference === "zh-CN" ? t("chinese") : t("english")}</span>
-            </button>
-            {settingsOpen && <div className="settings-menu" role="menu">
-              <div className="settings-menu-title">{t("language")}</div>
-              {(["auto", "zh-CN", "en"] as LocalePreference[]).map((option) => {
-                const label = option === "auto" ? t("auto") : option === "zh-CN" ? t("chinese") : t("english");
-                return <button key={option} className={`settings-option ${localePreference === option ? "selected" : ""}`} role="menuitemradio" aria-checked={localePreference === option} onClick={() => changeLocale(option)}><span>{label}</span>{localePreference === option && <Icon name="check" size={14} />}</button>;
-              })}
-              <div className="settings-menu-divider" />
-              <div className="settings-menu-title">{t("daemonStatus")}</div>
-              <div className="settings-daemon-row"><span className={`settings-daemon-dot ${daemonConnected ? "online" : "offline"}`} /><span><strong>{t("localDaemon")}</strong><small>{daemonConnected ? t("connected") : t("notConnected")}</small></span></div>
-              <div className="settings-menu-divider" />
-              <div className="settings-menu-title">{t("cliCommand")}</div>
-              <div className="settings-cli-row">
-                <span className={`settings-daemon-dot ${cliStatus?.installed ? "online" : "offline"}`} />
-                <span className="settings-cli-copy">
-                  <strong>{cliStatus?.installed ? t("cliInstalled") : t("cliCommand")}</strong>
-                  <small>{cliStatus?.supported ? t("cliInstallPath", { path: cliStatus.path }) : t("cliInstallUnsupported")}</small>
-                </span>
-              </div>
-              {cliStatus?.supported && <button className="settings-cli-install" disabled={cliBusy} onClick={() => void installCli()}>{cliStatus.installed ? t("updateCli") : t("installCli")}</button>}
-            </div>}
+          <div className="sidebar-footer-actions">
+            <div className="sidebar-settings">
+              <button className={`sidebar-settings-button ${settingsOpen ? "open" : ""}`} onClick={() => setSettingsOpen((open) => !open)} aria-haspopup="menu" aria-expanded={settingsOpen}>
+                <Icon name="sliders" size={15} /><span>{t("settings")}</span>
+              </button>
+              {settingsOpen && <div className="settings-menu" role="menu">
+                <div className="settings-menu-title">{t("language")}</div>
+                {(["auto", "zh-CN", "en"] as LocalePreference[]).map((option) => {
+                  const label = option === "auto" ? t("auto") : option === "zh-CN" ? t("chinese") : t("english");
+                  return <button key={option} className={`settings-option ${localePreference === option ? "selected" : ""}`} role="menuitemradio" aria-checked={localePreference === option} onClick={() => changeLocale(option)}><span>{label}</span>{localePreference === option && <Icon name="check" size={14} />}</button>;
+                })}
+              </div>}
+            </div>
+            <button className={`sidebar-update-button ${updateInfo ? "available" : ""} ${updateChecking ? "checking" : ""}`} disabled={updateChecking || updateBusy} onClick={() => updateInfo ? setUpdateOpen(true) : void checkForUpdates(true)} aria-label={updateInfo ? t("updateAvailableAction", { version: updateInfo.version }) : t("checkForUpdates")} title={updateInfo ? t("updateAvailableAction", { version: updateInfo.version }) : t("checkForUpdates")}><Icon name={updateInfo ? "download" : "refresh"} size={14} /></button>
           </div>
         </div>
       </aside>
@@ -493,6 +616,12 @@ function App() {
 
       {error && <div className="error-banner"><span>{error}</span><button onClick={() => setError(undefined)}><Icon name="close" size={14} /></button></div>}
       {toast && <div className="toast"><span className="toast-check"><Icon name="check" size={13} /></span>{toast}</div>}
+
+      {updateOpen && updateInfo && <div className="modal-backdrop update-backdrop" onMouseDown={(event) => !updateBusy && event.target === event.currentTarget && setUpdateOpen(false)}><div className="confirm-dialog update-dialog" role="dialog" aria-modal="true" aria-labelledby="update-title"><div className="confirm-icon cli-gate-icon"><Icon name="refresh" size={20} /></div><div><div className="eyebrow">{t("softwareUpdate")}</div><h2 id="update-title">{t("updateAvailableTitle", { version: updateInfo.version })}</h2><p>{t("updateAvailableDescription")}</p></div><div className="update-version-row"><div><span>{t("currentVersion")}</span><strong>{updateInfo.currentVersion}</strong></div><Icon name="chevron" size={15} /><div><span>{t("newVersion")}</span><strong>{updateInfo.version}</strong></div></div>{updateInfo.body && <div className="update-notes"><span>{t("releaseNotes")}</span><p>{updateInfo.body}</p></div>}{updateBusy && <div className="update-progress"><div><span style={{ width: `${updateProgress?.total ? Math.min(100, Math.round((updateProgress.downloaded / updateProgress.total) * 100)) : 18}%` }} /></div><small>{updateProgress?.total ? t("downloadingUpdatePercent", { percent: Math.min(100, Math.round((updateProgress.downloaded / updateProgress.total) * 100)) }) : t("preparingUpdate")}</small></div>}<div className="modal-actions"><button className="button ghost" disabled={updateBusy} onClick={() => setUpdateOpen(false)}>{t("remindLater")}</button><button className="button primary" disabled={updateBusy} onClick={() => void installAppUpdate()}><Icon name="refresh" size={14} /> {updateBusy ? t("installingUpdate") : t("downloadInstallRestart")}</button></div></div></div>}
+
+      {cliGateOpen && cliStatus && <div className="modal-backdrop cli-gate-backdrop"><div className="confirm-dialog cli-gate" role="dialog" aria-modal="true" aria-labelledby="cli-gate-title"><div className="confirm-icon cli-gate-icon"><Icon name="terminal" size={20} /></div><div><div className="eyebrow">{t("cliRequiredEyebrow")}</div><h2 id="cli-gate-title">{cliDialogTitle}</h2><p>{cliDialogDescription}</p></div><div className="cli-gate-details"><div><span>{t("cliPathLabel")}</span><code>{cliStatus.path ?? "—"}</code></div><div><span>{t("cliCurrentVersionLabel")}</span><strong>{cliStatus.installedVersion ?? "—"}</strong></div><div><span>{t("cliBundledVersionLabel")}</span><strong>{cliStatus.bundledVersion}</strong></div><div><span>{t("cliSourceLabel")}</span><strong>{t(cliSourceKey[cliStatus.source])}</strong></div>{cliStatus.state === "conflict" && <div className="full"><span>{t("cliPathLabel")}</span><code>{cliStatus.candidates.join("\n")}</code></div>}</div><div className="modal-actions"><button className="button ghost" disabled={cliBusy} onClick={() => void api.quitApp()}>{t("quitApp")}</button>{cliStatus.state === "conflict" ? <button className="button primary" disabled={cliBusy} onClick={() => void refreshCliStatus()}><Icon name="refresh" size={14} /> {t("recheckCli")}</button> : <button className="button primary" disabled={cliBusy} onClick={() => void installCli()}><Icon name="terminal" size={14} /> {cliInstallLabel}</button>}</div></div></div>}
+
+      {daemonGateOpen && daemonRuntime && <div className="modal-backdrop cli-gate-backdrop"><div className="confirm-dialog cli-gate" role="dialog" aria-modal="true" aria-labelledby="daemon-gate-title"><div className="confirm-icon cli-gate-icon"><Icon name="restart" size={20} /></div><div><div className="eyebrow">{t("daemonMigrateEyebrow")}</div><h2 id="daemon-gate-title">{t("daemonMigrateTitle")}</h2><p>{t("daemonMigrateDescription")}</p></div><div className="cli-gate-details"><div><span>{t("cliCurrentVersionLabel")}</span><strong>{daemonRuntime.version ?? t("unknownVersion")}</strong></div><div><span>{t("cliBundledVersionLabel")}</span><strong>{daemonRuntime.bundledVersion}</strong></div></div><div className="modal-actions"><button className="button ghost" disabled={daemonBusy} onClick={() => void api.quitApp()}>{t("quitApp")}</button><button className="button primary" disabled={daemonBusy} onClick={() => void migrateDaemon()}><Icon name="restart" size={14} /> {t("migrateDaemonAction")}</button></div></div></div>}
 
       {addOpen && <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setAddOpen(false)}><div className="modal-sheet"><div className="modal-heading"><div><div className="eyebrow">{t("newRegistration")}</div><h2>{t("addServiceTitle")}</h2><p>{t("addServiceDescription")}</p></div><button className="icon-button" onClick={() => setAddOpen(false)} aria-label={t("close")}><Icon name="close" size={17} /></button></div><div className="form-grid"><label><span>{t("serviceName")}</span><input autoFocus value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="e.g. api" /></label><label><span>{t("portLabel")} <em>{t("optional")}</em></span><input type="number" value={form.port} onChange={(event) => setForm({ ...form, port: event.target.value })} placeholder="3000" /></label><label className="full"><span>{t("commandLabel")}</span><input value={form.command} onChange={(event) => setForm({ ...form, command: event.target.value })} placeholder="npm run dev" /></label><label className="full"><span>{t("workingDirectoryLabel")} <em>{t("optional")}</em></span><input value={form.cwd} onChange={(event) => setForm({ ...form, cwd: event.target.value })} placeholder="/Users/you/project" /></label></div><label className="toggle-row"><input type="checkbox" checked={form.autorestart} onChange={(event) => setForm({ ...form, autorestart: event.target.checked })} /><span className="toggle"><i /></span><span><strong>{t("restartAutomatically")}</strong><small>{t("restartDescription")}</small></span></label><div className="modal-actions"><button className="button ghost" onClick={() => setAddOpen(false)}>{t("cancel")}</button><button className="button primary" disabled={!!busy} onClick={() => void submitAdd()}><Icon name="play" size={14} /> {t("registerStart")}</button></div></div></div>}
 

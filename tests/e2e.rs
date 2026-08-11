@@ -99,6 +99,16 @@ fn standalone_cli_and_daemon_work_without_node_or_version_manager() {
         fixture.stdout(&["--version"]).trim(),
         env!("CARGO_PKG_VERSION")
     );
+    let missing_status_name = fixture.run_unchecked(&["status"]);
+    assert!(!missing_status_name.status.success());
+    let missing_status_name_stderr = String::from_utf8_lossy(&missing_status_name.stderr);
+    assert!(missing_status_name_stderr.contains("<NAME>"));
+    assert!(missing_status_name_stderr.contains("Usage: asvc status <NAME>"));
+    assert!(
+        fixture
+            .stdout(&["completion", "bash"])
+            .contains("restart|logs|status|info")
+    );
 
     assert!(
         fixture
@@ -108,11 +118,9 @@ fn standalone_cli_and_daemon_work_without_node_or_version_manager() {
     assert!(!fixture.asvc_home.join("daemon.pid").exists());
 
     assert!(fixture.stdout(&["list"]).contains("no services"));
-    assert!(
-        fixture
-            .stdout(&["daemon", "status"])
-            .contains("daemon is running")
-    );
+    let daemon_status = fixture.stdout(&["daemon", "status"]);
+    assert!(daemon_status.contains("daemon is running"));
+    assert!(daemon_status.contains(env!("CARGO_PKG_VERSION")));
     let daemon_pid = fs::read_to_string(fixture.asvc_home.join("daemon.pid")).unwrap();
     assert_daemon_process(daemon_pid.trim(), fixture.binary);
 
@@ -123,16 +131,28 @@ fn standalone_cli_and_daemon_work_without_node_or_version_manager() {
             .contains("running")
     );
     assert!(fixture.stdout(&["list"]).contains("smoke"));
+    let status = fixture.stdout(&["status", "smoke"]);
+    assert!(status.contains("smoke → running"));
+    assert!(status.contains("pid "));
+    assert!(status.contains("uptime "));
     let info = fixture.stdout(&["info", "smoke"]);
     assert!(info.contains("Name: smoke"));
     assert!(info.contains("Status: running"));
     assert!(info.contains(&format!("Working directory: {cwd}")));
     assert!(info.contains(&format!("Command: {}", long_command())));
     assert!(info.contains("Auto restart: no"));
+    assert!(
+        fixture
+            .stdout(&["restart", "smoke"])
+            .contains("startup verified for 1s")
+    );
     let unknown = fixture.run_unchecked(&["info", "missing"]);
     assert!(!unknown.status.success());
     assert!(String::from_utf8_lossy(&unknown.stderr).contains("unknown service: missing"));
     assert!(fixture.stdout(&["stop", "smoke"]).contains("stopped"));
+    let stopped_status = fixture.run_unchecked(&["status", "smoke"]);
+    assert!(!stopped_status.status.success());
+    assert!(String::from_utf8_lossy(&stopped_status.stdout).contains("smoke → stopped"));
     assert!(
         fixture
             .stdout(&["daemon", "stop"])

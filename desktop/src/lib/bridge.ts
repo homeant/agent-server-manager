@@ -1,8 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { relaunch } from "@tauri-apps/plugin-process";
+import { check, type Update } from "@tauri-apps/plugin-updater";
 import type {
+  AppUpdateInfo,
+  AppUpdateProgress,
   BatchResult,
   CliInstallStatus,
+  DaemonRuntimeStatus,
   LogLine,
   ServiceInfo,
   ServiceSpec,
@@ -10,6 +15,8 @@ import type {
 
 const native = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 const nativeWindow = native ? getCurrentWindow() : undefined;
+const linuxDesktop = native && navigator.userAgent.includes("Linux");
+let pendingUpdate: Update | null = null;
 
 const mockServices: ServiceInfo[] = [
   {
@@ -116,22 +123,122 @@ async function call<T>(command: string, args: Record<string, unknown> = {}, fall
   return invoke<T>(command, args);
 }
 
+function mockCliInstallStatus(): CliInstallStatus {
+  const state = new URLSearchParams(window.location.search).get("cli");
+  if (state === "missing") {
+    return {
+      supported: true,
+      state: "missing",
+      path: "/opt/homebrew/bin/asvc",
+      bundledVersion: "0.4.6",
+      source: "none",
+      candidates: [],
+    };
+  }
+  if (state === "outdated") {
+    return {
+      supported: true,
+      state: "outdated",
+      path: "/opt/homebrew/bin/asvc",
+      installedVersion: "0.4.4",
+      bundledVersion: "0.4.6",
+      source: "homebrew",
+      candidates: ["/opt/homebrew/bin/asvc"],
+    };
+  }
+  return {
+    supported: true,
+    state: "current",
+    path: "/usr/local/bin/asvc",
+    installedVersion: "0.4.6",
+    bundledVersion: "0.4.6",
+    source: "desktop",
+    candidates: ["/usr/local/bin/asvc"],
+  };
+}
+
+function mockAppUpdate(): AppUpdateInfo | undefined {
+  if (new URLSearchParams(window.location.search).get("update") !== "available") return undefined;
+  return {
+    currentVersion: "0.4.6",
+    version: "0.5.0",
+    body: "• Desktop now owns the matching CLI\n• Faster service status refresh\n• Reliability improvements",
+    date: "2026-08-10T18:00:00Z",
+  };
+}
+
+async function checkForUpdate(): Promise<AppUpdateInfo | undefined> {
+  if (!native) return fake(mockAppUpdate());
+  if (pendingUpdate) {
+    await pendingUpdate.close();
+    pendingUpdate = null;
+  }
+  pendingUpdate = await check({ timeout: 10_000 });
+  if (!pendingUpdate) return undefined;
+  return {
+    currentVersion: pendingUpdate.currentVersion,
+    version: pendingUpdate.version,
+    body: pendingUpdate.body,
+    date: pendingUpdate.date,
+  };
+}
+
+async function installUpdate(onProgress: (progress: AppUpdateProgress) => void): Promise<void> {
+  if (!native) {
+    for (const downloaded of [18, 46, 73, 100]) {
+      await new Promise((resolve) => window.setTimeout(resolve, 90));
+      onProgress({ downloaded, total: 100 });
+    }
+    return;
+  }
+  if (!pendingUpdate) throw new Error("There is no pending Asvc update.");
+  let downloaded = 0;
+  let total: number | undefined;
+  await pendingUpdate.downloadAndInstall((event) => {
+    if (event.event === "Started") {
+      total = event.data.contentLength;
+      onProgress({ downloaded, total });
+    } else if (event.event === "Progress") {
+      downloaded += event.data.chunkLength;
+      onProgress({ downloaded, total });
+    } else {
+      onProgress({ downloaded: total ?? downloaded, total });
+    }
+  });
+  await relaunch();
+}
+
 export const api = {
+  autoUpdateSupported: !linuxDesktop,
+  checkForUpdate,
+  installUpdate,
   getServices: () => call<ServiceInfo[]>("get_services", {}, mockServices),
   getLogs: (name: string, lines = 240) =>
     call<LogLine[]>("get_logs", { name, lines }, mockLogs.filter((log) => log.name === name)),
-  daemonStatus: () => call<boolean>("daemon_status", {}, true),
-  setLocale: (locale: "en" | "zh-CN") => call<void>("set_locale", { locale }, undefined),
-  cliInstallStatus: () => call<CliInstallStatus>("cli_install_status", {}, {
-    supported: true,
-    installed: false,
-    path: "/usr/local/bin/asvc",
+  daemonStatus: () => call<DaemonRuntimeStatus>("daemon_status", {}, {
+    connected: true,
+    version: "0.4.6",
+    bundledVersion: "0.4.6",
+    current: true,
   }),
+  migrateDaemon: () => call<DaemonRuntimeStatus>("migrate_daemon", {}, {
+    connected: true,
+    version: "0.4.6",
+    bundledVersion: "0.4.6",
+    current: true,
+  }),
+  setLocale: (locale: "en" | "zh-CN") => call<void>("set_locale", { locale }, undefined),
+  cliInstallStatus: () => call<CliInstallStatus>("cli_install_status", {}, mockCliInstallStatus()),
   installCli: () => call<CliInstallStatus>("install_cli", {}, {
     supported: true,
-    installed: true,
+    state: "current",
     path: "/usr/local/bin/asvc",
+    installedVersion: "0.4.6",
+    bundledVersion: "0.4.6",
+    source: "desktop",
+    candidates: ["/usr/local/bin/asvc"],
   }),
+  quitApp: () => call<void>("quit_app", {}, undefined),
   startDragging: () => nativeWindow ? nativeWindow.startDragging() : fake(undefined),
   toggleMaximize: () => nativeWindow ? nativeWindow.toggleMaximize() : fake(undefined),
   startService: (name: string) => call<ServiceInfo>("start_service", { name }, mockService(name, "running")),

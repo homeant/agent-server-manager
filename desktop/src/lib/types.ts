@@ -51,6 +51,29 @@ export interface BatchResult {
 
 export interface CliInstallStatus {
   supported: boolean;
-  installed: boolean;
-  path: string;
+  state: "missing" | "current" | "outdated" | "conflict";
+  path?: string;
+  installedVersion?: string;
+  bundledVersion: string;
+  source: "none" | "desktop" | "homebrew" | "npm" | "unknown";
+  candidates: string[];
+}
+
+export interface DaemonRuntimeStatus {
+  connected: boolean;
+  version?: string;
+  bundledVersion: string;
+  current: boolean;
+}
+
+export interface AppUpdateInfo {
+  currentVersion: string;
+  version: string;
+  body?: string;
+  date?: string;
+}
+
+export interface AppUpdateProgress {
+  downloaded: number;
+  total?: number;
 }

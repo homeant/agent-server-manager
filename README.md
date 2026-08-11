@@ -39,7 +39,10 @@ agent 在另一头 `asvc restart web`，daemon 只是把底层进程换了一个
 
 ## 安装
 
-### Homebrew（macOS，推荐）
+安装形态二选一：只需要终端和 agent 时安装 headless CLI；需要图形界面时安装桌面版，
+桌面版会同时接管同版本 CLI。不要在同一用户 PATH 中长期保留两套安装。
+
+### Homebrew（macOS，CLI-only）
 
 通过 Homeant 的标准 GitHub tap 安装；直接安装会自动添加并仅信任这个 Formula：
 
@@ -84,12 +87,20 @@ npm run package:headless
 
 ### 桌面版
 
-桌面版是独立的 Tauri 应用，不通过 `asvc desktop` 启动，也不改变 headless CLI 的职责。
-macOS 桌面版以 `.dmg` 发布，拖入 `Applications` 后即可使用；应用包内始终携带同版本的
-headless `asvc` CLI。需要在终端直接使用命令时，打开应用的“设置”，点击“安装到 PATH”，
-应用会把 CLI 安装到 `/usr/local/bin/asvc`，必要时弹出 macOS 授权对话框。DMG 本身不会在
-用户未确认的情况下修改 PATH。Linux 的 `.deb` 会把 CLI 放到 `/usr/bin/asvc`，Windows 的
-NSIS 安装器会把当前用户的应用目录加入 PATH；便携式 AppImage 不修改宿主机 PATH。
+桌面版是 CLI 版的超集，不通过 `asvc desktop` 启动。macOS 桌面版以 `.dmg` 发布，应用包内
+始终携带同版本的 headless CLI。首次启动及桌面版本变化时，应用会读取用户登录 shell 的
+PATH，找到终端实际解析到的第一个 `asvc` 并比较版本：缺失时要求安装，版本不同时要求迁移，
+一致后才连接 daemon。写入系统目录前会先显示路径、来源和版本，并由用户确认及完成 macOS
+授权；不会在未确认时修改文件。
+
+普通独立二进制由桌面版原路径接管；Homebrew/npm 安装会在用户确认后先通过原包管理器卸载，
+再把桌面内置 CLI 安装到同一个 PATH 目录。PATH 中存在多个 `asvc` 时会阻止接管并列出冲突，
+避免留下两套命令。Linux 的 `.deb` 会把 CLI 放到 `/usr/bin/asvc`，Windows 的 NSIS 安装器
+会把当前用户的应用目录加入 PATH。桌面版不再发布无法接管 PATH 的便携式 AppImage。
+
+daemon 的 `ping` 同时返回版本。桌面检测到已有 daemon 与自身版本不一致时，会在连接服务前
+要求确认切换；切换过程记录原本处于 running/starting 的服务，停止旧 daemon、启动桌面版
+daemon，并只恢复这些服务，不会把原本停止的服务意外启动。
 
 macOS 应用使用 ad-hoc 签名（不需要 Apple Developer 证书），用于完整封装应用资源，避免
 下载后的应用被 macOS 误报为“已损坏”。由于没有 Apple 公证，首次从浏览器下载后仍可能需要
@@ -105,9 +116,23 @@ npm run desktop:build
 Release 中的桌面资产以 `asvc-desktop-v<version>-<platform>-...` 命名；它们和 headless
 CLI 资产共用同一个 `SHA256SUMS`。
 
+macOS 和 Windows 桌面版会在启动完成后后台检查 GitHub Release。发现新版本时会显示版本号、
+更新说明和下载进度；用户可以稍后处理，或确认后下载已签名的更新、安装并自动重启。Linux
+`.deb` 继续由系统软件包管理器更新，桌面端不会绕过包管理器自行替换文件。
+
+更新包使用 Tauri updater 签名。发布前需要把 updater 私钥配置到 GitHub Actions：
+
+```bash
+gh secret set TAURI_SIGNING_PRIVATE_KEY < ~/.tauri/asvc-updater.key
+gh secret set TAURI_SIGNING_PRIVATE_KEY_PASSWORD < ~/.tauri/asvc-updater.password
+```
+
+私钥和密码不能提交到仓库，且必须一起安全备份；丢失任意一项后，已经安装的桌面版将无法验证
+后续更新。tag 发布流程会上传签名更新包和 `latest.json`。
+
 构建职责和各平台安装行为见 [`docs/asvc-packaging.md`](docs/asvc-packaging.md)。
 
-### npm 安装
+### npm 安装（CLI-only）
 
 ```bash
 npm install -g @homeant/asvc
@@ -177,6 +202,7 @@ asvc start web -c "npm run dev" --port 3000 -d
 asvc start api -c "go run ." --cwd /path/api --env KEY=VAL --autorestart -d
 
 asvc list                 # 列出所有服务、状态及进程组 CPU/内存用量
+asvc status web           # 查看单个服务的精简运行状态（必须提供服务名）
 asvc info web             # 查看 web 的完整详情（也可用 asvc show web）
 asvc logs web             # 看 web 最近 200 行日志
 asvc logs web -f          # 持续跟随（agent 重启服务也不断开）
@@ -204,6 +230,10 @@ asvc skill status                                   # 查看名称、版本和�
 
 `start` 参数：`-c/--cmd`（命令，经 shell 执行）、`-w/--cwd`（默认当前目录）、
 `-p/--port`（仅展示/排查）、`-e/--env KEY=VAL`（可多个）、`--autorestart`、`-d/--detach`（后台）。
+
+`status <name>` 只查询一个服务，并要求服务名；它不会兼容或回退到 `list`。服务处于
+`running` / `starting` 时退出码为 0，处于 `stopped` / `exited` / `errored` 时退出码为 1。
+查看全部服务始终使用 `asvc list`。
 
 ### 语言
 
@@ -249,6 +279,9 @@ daemon 会在一次批量请求开始时固定服务名单，最多同时处理 
 这样不依赖事先声明 `port`：无论端口被谁占（你手动起的、孤儿进程、还是另一个服务），
 只要进程因此启动失败，走 Bash 的 agent 都能直接从**非零退出码 + 输出**判定失败和原因，
 而不是拿到一个乐观的 “running” 再去翻日志。`asvc start`（前台）同样：启动即失败会打印提示并以非零码退出。
+
+`restart` 返回 0 时已经完成上述启动验证，无需再执行 `status`、`list` 或 Compose 检查；
+只有用户明确要求额外验证时才继续检查。
 
 ## 让 agent 用起来（Codex / Claude Code Skill）
 

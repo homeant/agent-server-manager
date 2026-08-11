@@ -1,1 +1,1 @@
-{"main-capability":{"identifier":"main-capability","description":"Permissions for the main asvc window.","local":true,"windows":["main"],"permissions":["core:default","core:window:allow-start-dragging","core:window:allow-toggle-maximize"]}}
+{"main-capability":{"identifier":"main-capability","description":"Permissions for the main asvc window.","local":true,"windows":["main"],"permissions":["core:default","core:window:allow-start-dragging","core:window:allow-toggle-maximize","process:allow-restart","updater:default"]}}

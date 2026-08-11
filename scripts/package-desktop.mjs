@@ -56,7 +56,8 @@ const bundleFiles = filesUnder(bundleRoot).filter((file) => {
     lower.endsWith(".appimage") ||
     lower.endsWith(".msi") ||
     lower.endsWith(".exe") ||
-    lower.endsWith(".app.tar.gz")
+    lower.endsWith(".app.tar.gz") ||
+    lower.endsWith(".sig")
   );
 });
 

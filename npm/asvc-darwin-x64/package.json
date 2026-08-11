@@ -1,6 +1,6 @@
 {
   "name": "@homeant/asvc-darwin-x64",
-  "version": "0.4.5",
+  "version": "0.4.6",
   "description": "Native macOS x64 binary for @homeant/asvc",
   "license": "MIT",
   "author": "homeant",
