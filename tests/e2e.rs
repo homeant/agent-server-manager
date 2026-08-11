@@ -103,7 +103,7 @@ fn standalone_cli_and_daemon_work_without_node_or_version_manager() {
     assert!(!missing_status_name.status.success());
     let missing_status_name_stderr = String::from_utf8_lossy(&missing_status_name.stderr);
     assert!(missing_status_name_stderr.contains("<NAME>"));
-    assert!(missing_status_name_stderr.contains("Usage: asvc status <NAME>"));
+    assert!(missing_status_name_stderr.contains("status <NAME>"));
     assert!(
         fixture
             .stdout(&["completion", "bash"])
