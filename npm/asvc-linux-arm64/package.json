@@ -1,6 +1,6 @@
 {
   "name": "@homeant/asvc-linux-arm64",
-  "version": "0.4.6",
+  "version": "0.4.7",
   "description": "Native Linux arm64 binary for @homeant/asvc",
   "license": "MIT",
   "author": "homeant",

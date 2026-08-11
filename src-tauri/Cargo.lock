@@ -108,7 +108,7 @@ dependencies = [
 
 [[package]]
 name = "asvc"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "anyhow",
  "chrono",
@@ -124,7 +124,7 @@ dependencies = [
 
 [[package]]
 name = "asvc-desktop"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "anyhow",
  "asvc",

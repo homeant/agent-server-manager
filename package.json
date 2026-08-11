@@ -1,6 +1,6 @@
 {
   "name": "@homeant/asvc",
-  "version": "0.4.6",
+  "version": "0.4.7",
   "description": "统一管理本地开发服务的守护进程 + CLI，让人和 agent 通过同一套 asvc 命令启动/重启/关闭服务，避免端口冲突与重复启动。",
   "type": "module",
   "license": "MIT",
@@ -50,10 +50,10 @@
     "node": ">=20"
   },
   "optionalDependencies": {
-    "@homeant/asvc-darwin-arm64": "0.4.6",
-    "@homeant/asvc-darwin-x64": "0.4.6",
-    "@homeant/asvc-linux-arm64": "0.4.6",
-    "@homeant/asvc-linux-x64": "0.4.6",
-    "@homeant/asvc-win32-x64": "0.4.6"
+    "@homeant/asvc-darwin-arm64": "0.4.7",
+    "@homeant/asvc-darwin-x64": "0.4.7",
+    "@homeant/asvc-linux-arm64": "0.4.7",
+    "@homeant/asvc-linux-x64": "0.4.7",
+    "@homeant/asvc-win32-x64": "0.4.7"
   }
 }
